@@ -15,13 +15,18 @@
           version = "0.1.0";
           src = ./.;
           vendorHash = "sha256-IFJmM1jacTeNk9qo1An/FGi/BdjesasSNAXTdj/LBIM=";
-          nativeBuildInputs = [ pkgs.makeWrapper ];
+          nativeBuildInputs = [ pkgs.makeWrapper pkgs.installShellFiles ];
           postInstall = ''
             ln -s $out/bin/audiotools $out/bin/record
             ln -s $out/bin/audiotools $out/bin/rec
             ln -s $out/bin/audiotools $out/bin/transcribe
             wrapProgram $out/bin/audiotools \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg ]}
+
+            installShellCompletion --cmd audiotools \
+              --bash <($out/bin/audiotools completion bash) \
+              --fish <($out/bin/audiotools completion fish) \
+              --zsh  <($out/bin/audiotools completion zsh)
           '';
         };
       in
