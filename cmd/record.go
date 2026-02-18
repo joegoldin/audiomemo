@@ -26,6 +26,7 @@ var (
 	rTranscribe     bool
 	rTranscribeArgs string
 	rNoTUI          bool
+	rVerbose        bool
 	rConfig         string
 )
 
@@ -57,6 +58,7 @@ func init() {
 	recordCmd.Flags().BoolVarP(&rTranscribe, "transcribe", "t", false, "transcribe after recording")
 	recordCmd.Flags().StringVar(&rTranscribeArgs, "transcribe-args", "", "extra args for transcribe")
 	recordCmd.Flags().BoolVar(&rNoTUI, "no-tui", false, "headless mode")
+	recordCmd.Flags().BoolVarP(&rVerbose, "verbose", "v", false, "verbose output (passed to transcribe)")
 	recordCmd.Flags().StringVar(&rConfig, "config", "", "config file path")
 }
 
@@ -211,10 +213,14 @@ func runPostTranscribe(audioPath string) error {
 		self = "transcribe"
 	}
 
-	args := []string{audioPath}
-	if rTranscribeArgs != "" {
-		args = append(strings.Fields(rTranscribeArgs), audioPath)
+	args := []string{}
+	if rVerbose {
+		args = append(args, "--verbose")
 	}
+	if rTranscribeArgs != "" {
+		args = append(args, strings.Fields(rTranscribeArgs)...)
+	}
+	args = append(args, audioPath)
 
 	transcribeCmd := exec.Command(self, append([]string{"transcribe"}, args...)...)
 	transcribeCmd.Stdout = os.Stdout

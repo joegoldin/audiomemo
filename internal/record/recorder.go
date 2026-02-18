@@ -10,6 +10,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -31,6 +32,7 @@ type Recorder struct {
 	Done   chan error
 	done   chan struct{} // closed when ffmpeg exits; safe for multiple waiters
 	exitErr error
+	paused  bool
 }
 
 func InputFormat() string {
@@ -222,12 +224,29 @@ func (r *Recorder) parseStderr() {
 	}
 }
 
+// Pause toggles pause/resume using SIGSTOP/SIGCONT so ffmpeg's stdin
+// command parser is never put into an unexpected state.
 func (r *Recorder) Pause() {
-	r.stdin.Write([]byte("c"))
+	if r.cmd.Process == nil {
+		return
+	}
+	if r.paused {
+		r.cmd.Process.Signal(syscall.SIGCONT)
+		r.paused = false
+	} else {
+		r.cmd.Process.Signal(syscall.SIGSTOP)
+		r.paused = true
+	}
 }
 
 func (r *Recorder) Stop() {
+	// Resume first if paused, otherwise ffmpeg can't process the quit.
+	if r.paused && r.cmd.Process != nil {
+		r.cmd.Process.Signal(syscall.SIGCONT)
+		r.paused = false
+	}
 	r.stdin.Write([]byte("q"))
+	r.stdin.Close()
 }
 
 // Wait blocks until ffmpeg has fully exited and the output file is finalized.
