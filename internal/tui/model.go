@@ -119,7 +119,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
 		m.recorder.Stop()
 		m.state = StateSaved
-		return m, nil
+		return m, tea.Quit
 
 	case key.Matches(msg, key.NewBinding(key.WithKeys("p", " "))):
 		if m.state == StateRecording {

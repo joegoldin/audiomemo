@@ -67,7 +67,7 @@ func BuildFFmpegArgs(opts RecordOpts) []string {
 	args := []string{
 		"-f", inputFmt,
 		"-i", inputDevice,
-		"-af", "astats=metadata=1:reset=1,ametadata=print:file=-",
+		"-af", "astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
 		"-c:a", codec,
 		"-ar", strconv.Itoa(opts.SampleRate),
 		"-ac", strconv.Itoa(opts.Channels),
@@ -126,6 +126,7 @@ func Start(opts RecordOpts) (*Recorder, error) {
 }
 
 func (r *Recorder) parseStderr() {
+	defer close(r.Level)
 	scanner := bufio.NewScanner(r.stderr)
 	for scanner.Scan() {
 		line := scanner.Text()
@@ -144,9 +145,8 @@ func (r *Recorder) Pause() {
 	r.stdin.Write([]byte("c"))
 }
 
-func (r *Recorder) Stop() error {
+func (r *Recorder) Stop() {
 	r.stdin.Write([]byte("q"))
-	return <-r.Done
 }
 
 func EnsureOutputDir(dir string) error {
