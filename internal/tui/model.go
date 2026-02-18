@@ -201,7 +201,11 @@ func (m *Model) View() string {
 	center := lipgloss.JoinHorizontal(lipgloss.Center, animView, dbStr)
 
 	// Info
-	micLine := infoStyle.Render(fmt.Sprintf("  mic: %s", m.opts.Device))
+	micDisplay := m.opts.Device
+	if m.opts.DeviceLabel != "" {
+		micDisplay = m.opts.DeviceLabel
+	}
+	micLine := infoStyle.Render(fmt.Sprintf("  mic: %s", micDisplay))
 	outLine := infoStyle.Render(fmt.Sprintf("  out: %s", m.opts.OutputPath))
 
 	// Keys

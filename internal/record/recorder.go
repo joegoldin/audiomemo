@@ -14,11 +14,13 @@ import (
 )
 
 type RecordOpts struct {
-	Device     string
-	Format     string
-	SampleRate int
-	Channels   int
-	OutputPath string
+	Device      string
+	Devices     []string
+	DeviceLabel string
+	Format      string
+	SampleRate  int
+	Channels    int
+	OutputPath  string
 }
 
 type Recorder struct {
@@ -88,6 +90,62 @@ func BuildFFmpegArgs(opts RecordOpts) []string {
 	return args
 }
 
+// BuildFFmpegArgsMulti builds ffmpeg args for recording from multiple input
+// devices simultaneously, mixing them into a single output via amix. For a
+// single device it delegates to BuildFFmpegArgs. An empty device list returns
+// an error.
+func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
+	devices := opts.Devices
+	if len(devices) == 0 {
+		return nil, fmt.Errorf("BuildFFmpegArgsMulti: no devices specified")
+	}
+	if len(devices) == 1 {
+		opts.Device = devices[0]
+		return BuildFFmpegArgs(opts), nil
+	}
+
+	inputFmt := InputFormat()
+	codec := CodecForFormat(opts.Format)
+
+	var args []string
+
+	// Add each input device.
+	for _, dev := range devices {
+		inputDevice := dev
+		if inputFmt == "avfoundation" && !strings.HasPrefix(dev, ":") {
+			inputDevice = ":" + dev
+		}
+		args = append(args, "-f", inputFmt, "-i", inputDevice)
+	}
+
+	// Build filter_complex: mix all inputs then apply VU meter filters.
+	n := len(devices)
+	var inputLabels string
+	for i := 0; i < n; i++ {
+		inputLabels += fmt.Sprintf("[%d:a]", i)
+	}
+	filterComplex := fmt.Sprintf(
+		"%samix=inputs=%d:duration=longest,asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr[a]",
+		inputLabels, n,
+	)
+	args = append(args, "-filter_complex", filterComplex)
+	args = append(args, "-map", "[a]")
+
+	args = append(args,
+		"-c:a", codec,
+		"-ar", strconv.Itoa(opts.SampleRate),
+		"-ac", strconv.Itoa(opts.Channels),
+	)
+
+	if codec == "libopus" {
+		args = append(args, "-b:a", "64k")
+	}
+
+	args = append(args, "-output_ts_offset", "0")
+	args = append(args, "-y", opts.OutputPath)
+	return args, nil
+}
+
 func GenerateFilename(format, label string) string {
 	ts := time.Now().Format("2006-01-02T15-04-05")
 	if label != "" {
@@ -99,7 +157,20 @@ func GenerateFilename(format, label string) string {
 var rmsPattern = regexp.MustCompile(`lavfi\.astats\.Overall\.RMS_level=(-?[\d.]+|inf|-inf)`)
 
 func Start(opts RecordOpts) (*Recorder, error) {
-	args := BuildFFmpegArgs(opts)
+	var args []string
+	if len(opts.Devices) > 1 {
+		var err error
+		args, err = BuildFFmpegArgsMulti(opts)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		// Single device: prefer Devices[0] if set, fall back to Device field.
+		if len(opts.Devices) == 1 {
+			opts.Device = opts.Devices[0]
+		}
+		args = BuildFFmpegArgs(opts)
+	}
 	cmd := exec.Command("ffmpeg", args...)
 
 	stdin, err := cmd.StdinPipe()

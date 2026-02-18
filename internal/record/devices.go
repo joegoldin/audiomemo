@@ -10,6 +10,7 @@ type Device struct {
 	Name        string
 	Description string
 	IsDefault   bool
+	IsMonitor   bool
 }
 
 var devicePattern = regexp.MustCompile(`^\s+(\*?)\s*(\S+)\s+\[(.+)\]`)
@@ -21,10 +22,12 @@ func ParseDeviceList(output string) []Device {
 		if len(m) < 4 {
 			continue
 		}
+		name := m[2]
 		devices = append(devices, Device{
 			IsDefault:   m[1] == "*",
-			Name:        m[2],
+			Name:        name,
 			Description: m[3],
+			IsMonitor:   strings.HasSuffix(name, ".monitor"),
 		})
 	}
 	return devices

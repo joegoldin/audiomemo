@@ -23,4 +23,10 @@ func TestParseDeviceList(t *testing.T) {
 	if !devices[0].IsDefault {
 		t.Error("expected first device to be default (has *)")
 	}
+	if !devices[0].IsMonitor {
+		t.Error("expected first device (monitor) to have IsMonitor=true")
+	}
+	if devices[1].IsMonitor {
+		t.Error("expected second device (input) to have IsMonitor=false")
+	}
 }

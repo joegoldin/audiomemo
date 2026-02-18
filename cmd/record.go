@@ -107,12 +107,23 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if rChannels != 0 {
 		channels = rChannels
 	}
-	device := cfg.Record.Device
+	deviceName := cfg.Record.Device
 	if rDevice != "" {
-		device = rDevice
+		deviceName = rDevice
 	}
-	if device == "" {
-		device = "default"
+	if deviceName == "" {
+		deviceName = "default"
+	}
+
+	devices, err := cfg.ResolveDevice(deviceName)
+	if err != nil {
+		return fmt.Errorf("failed to resolve device %q: %w", deviceName, err)
+	}
+
+	// Build a human-readable label for the TUI mic line.
+	deviceLabel := deviceName
+	if group, ok := cfg.DeviceGroups[deviceName]; ok && len(group) > 1 {
+		deviceLabel = fmt.Sprintf("%s (%s)", deviceName, strings.Join(group, " + "))
 	}
 
 	// Determine output path
@@ -128,11 +139,13 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, rName))
 
 	opts := record.RecordOpts{
-		Device:     device,
-		Format:     format,
-		SampleRate: sampleRate,
-		Channels:   channels,
-		OutputPath: outputPath,
+		Device:      devices[0],
+		Devices:     devices,
+		DeviceLabel: deviceLabel,
+		Format:      format,
+		SampleRate:  sampleRate,
+		Channels:    channels,
+		OutputPath:  outputPath,
 	}
 
 	rec, err := record.Start(opts)
