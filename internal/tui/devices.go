@@ -210,6 +210,13 @@ func (dm *DeviceManager) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case devicesLoadedMsg:
 		dm.devices = []record.Device(msg)
+		// Sort so sources come before monitors, matching the visual layout.
+		sort.SliceStable(dm.devices, func(i, j int) bool {
+			if dm.devices[i].IsMonitor != dm.devices[j].IsMonitor {
+				return !dm.devices[i].IsMonitor
+			}
+			return false
+		})
 		if len(dm.devices) > 0 {
 			return dm, dm.startVU()
 		}
