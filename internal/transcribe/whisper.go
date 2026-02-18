@@ -127,7 +127,7 @@ func (w *Whisper) Transcribe(ctx context.Context, audioPath string, opts Transcr
 	// convert non-wav audio to 16kHz mono wav via ffmpeg as a workaround
 	inputPath := audioPath
 	if w.variant == variantWhisperCPP && !isWav(audioPath) {
-		wavPath, err := convertToWav(ctx, audioPath, tmpDir)
+		wavPath, err := convertToWav(ctx, audioPath, tmpDir, opts.Verbose)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert audio for whisper-cpp: %w", err)
 		}
@@ -136,7 +136,9 @@ func (w *Whisper) Transcribe(ctx context.Context, audioPath string, opts Transcr
 
 	args := w.buildArgs(inputPath, tmpDir, opts)
 	cmd := exec.CommandContext(ctx, w.binary, args...)
-	cmd.Stderr = os.Stderr
+	if opts.Verbose {
+		cmd.Stderr = os.Stderr
+	}
 
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("%s failed: %w", w.Name(), err)
@@ -184,7 +186,9 @@ func (w *Whisper) transcribeFFmpeg(ctx context.Context, audioPath, tmpDir string
 	}
 
 	cmd := exec.CommandContext(ctx, w.binary, args...)
-	cmd.Stderr = os.Stderr
+	if opts.Verbose {
+		cmd.Stderr = os.Stderr
+	}
 
 	if err := cmd.Run(); err != nil {
 		return nil, fmt.Errorf("ffmpeg whisper filter failed: %w", err)
@@ -265,7 +269,7 @@ func isWav(path string) bool {
 	return strings.EqualFold(filepath.Ext(path), ".wav")
 }
 
-func convertToWav(ctx context.Context, audioPath, tmpDir string) (string, error) {
+func convertToWav(ctx context.Context, audioPath, tmpDir string, verbose bool) (string, error) {
 	base := strings.TrimSuffix(filepath.Base(audioPath), filepath.Ext(audioPath))
 	wavPath := filepath.Join(tmpDir, base+".wav")
 	// Use aresample with first_pts=0 to normalize timestamps; without this,
@@ -280,7 +284,9 @@ func convertToWav(ctx context.Context, audioPath, tmpDir string) (string, error)
 		"-c:a", "pcm_s16le",
 		"-y", wavPath,
 	)
-	cmd.Stderr = os.Stderr
+	if verbose {
+		cmd.Stderr = os.Stderr
+	}
 	if err := cmd.Run(); err != nil {
 		return "", err
 	}

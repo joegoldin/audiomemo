@@ -28,6 +28,7 @@ type TranscribeOpts struct {
 	Model    string
 	Language string
 	Format   OutputFormat
+	Verbose  bool
 }
 
 type Transcriber interface {

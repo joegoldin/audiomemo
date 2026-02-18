@@ -33,8 +33,36 @@
       {
         packages.default = audiotools;
         packages.audiotools = audiotools;
+
+        checks.default = pkgs.stdenv.mkDerivation {
+          name = "audiotools-tests";
+          src = ./.;
+          nativeBuildInputs = [ pkgs.go pkgs.ffmpeg pkgs.whisper-cpp ];
+          # Pre-populate go module cache from the vendor dir
+          GO111MODULE = "on";
+          GOFLAGS = "-mod=vendor";
+          # whisper-cpp model for integration tests
+          HOME = "/tmp/audiotools-test-home";
+          buildPhase = ''
+            export GOCACHE=$TMPDIR/go-cache
+            export GOPATH=$TMPDIR/go
+
+            # Set up whisper-cpp model for integration tests
+            mkdir -p /tmp/audiotools-test-home/.local/share/whisper-cpp
+            cp ${pkgs.fetchurl {
+              url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+              hash = "sha256-IN0Gm8bVzPbflJtqIVbuQmsqbiJFOL+kTCAksFmhdSU=";
+            }} /tmp/audiotools-test-home/.local/share/whisper-cpp/ggml-base.bin
+
+            go test -v -count=1 -timeout 300s ./...
+          '';
+          installPhase = ''
+            touch $out
+          '';
+        };
+
         devShells.default = pkgs.mkShell {
-          buildInputs = [ pkgs.go pkgs.gopls pkgs.ffmpeg ];
+          buildInputs = [ pkgs.go pkgs.gopls pkgs.ffmpeg pkgs.whisper-cpp ];
         };
       }
     ) // {

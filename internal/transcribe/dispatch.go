@@ -50,11 +50,7 @@ func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 		}
 		return NewWhisper(binary, cfg.Transcribe.Whisper.Model), nil
 	case "whisper-cpp":
-		binary := cfg.Transcribe.Whisper.Binary
-		if binary == "" {
-			binary = "whisper-cli"
-		}
-		return NewWhisper(binary, cfg.Transcribe.Whisper.Model), nil
+		return NewWhisper("whisper-cli", cfg.Transcribe.Whisper.Model), nil
 	case "whisperx":
 		return NewWhisper("whisperx", cfg.Transcribe.Whisper.Model), nil
 	case "ffmpeg-whisper":

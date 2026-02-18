@@ -89,31 +89,36 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Fprintf(os.Stderr, "Transcribing with %s...\n", backend.Name())
-
 	opts := transcribe.TranscribeOpts{
 		Model:    tModel,
 		Language: tLanguage,
 		Format:   transcribe.ParseFormat(tFormat),
+		Verbose:  tVerbose,
+	}
+
+	if tVerbose {
+		fmt.Fprintf(os.Stderr, "Transcribing with %s...\n", backend.Name())
 	}
 
 	start := time.Now()
 
-	// Show elapsed time ticker for backends that don't print their own progress
+	// Show elapsed time ticker when verbose
 	done := make(chan struct{})
-	go func() {
-		ticker := time.NewTicker(5 * time.Second)
-		defer ticker.Stop()
-		for {
-			select {
-			case <-done:
-				return
-			case t := <-ticker.C:
-				elapsed := t.Sub(start).Truncate(time.Second)
-				fmt.Fprintf(os.Stderr, "  %s elapsed...\n", elapsed)
+	if tVerbose {
+		go func() {
+			ticker := time.NewTicker(5 * time.Second)
+			defer ticker.Stop()
+			for {
+				select {
+				case <-done:
+					return
+				case t := <-ticker.C:
+					elapsed := t.Sub(start).Truncate(time.Second)
+					fmt.Fprintf(os.Stderr, "  %s elapsed...\n", elapsed)
+				}
 			}
-		}
-	}()
+		}()
+	}
 
 	result, err := backend.Transcribe(ctx, audioPath, opts)
 	close(done)
@@ -121,8 +126,10 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	elapsed := time.Since(start).Truncate(time.Millisecond)
-	fmt.Fprintf(os.Stderr, "Done in %s\n", elapsed)
+	if tVerbose {
+		elapsed := time.Since(start).Truncate(time.Millisecond)
+		fmt.Fprintf(os.Stderr, "Done in %s\n", elapsed)
+	}
 
 	output := result.Format(opts.Format)
 
