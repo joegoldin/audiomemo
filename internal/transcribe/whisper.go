@@ -176,6 +176,7 @@ func (w *Whisper) transcribeFFmpeg(ctx context.Context, audioPath, tmpDir string
 	filterStr := "whisper=" + strings.Join(filterParts, ":")
 
 	args := []string{
+		"-hide_banner", "-loglevel", "warning",
 		"-i", audioPath,
 		"-vn",
 		"-af", filterStr,
@@ -271,6 +272,7 @@ func convertToWav(ctx context.Context, audioPath, tmpDir string) (string, error)
 	// files recorded from PulseAudio may have a large initial PTS offset and
 	// ffmpeg pads the output with silence to match, inflating duration.
 	cmd := exec.CommandContext(ctx, "ffmpeg",
+		"-hide_banner", "-loglevel", "warning",
 		"-i", audioPath,
 		"-af", "aresample=async=1:first_pts=0",
 		"-ar", "16000",
@@ -385,10 +387,17 @@ func (w *Whisper) findOutputJSON(audioPath, tmpDir string) string {
 	return filepath.Join(tmpDir, base+".json")
 }
 
+// whisperOutput is a unified struct that handles JSON from all whisper variants.
+// OpenAI whisper/whisperx use "text" + "segments"; whisper-cpp uses "transcription".
 type whisperOutput struct {
+	// OpenAI whisper / whisperx
 	Text     string           `json:"text"`
 	Segments []whisperSegment `json:"segments"`
 	Language string           `json:"language"`
+
+	// whisper-cpp
+	Result        whisperCPPResult    `json:"result"`
+	Transcription []whisperCPPSegment `json:"transcription"`
 }
 
 type whisperSegment struct {
@@ -397,12 +406,34 @@ type whisperSegment struct {
 	Text  string  `json:"text"`
 }
 
+type whisperCPPResult struct {
+	Language string `json:"language"`
+}
+
+type whisperCPPSegment struct {
+	Timestamps struct {
+		From string `json:"from"`
+		To   string `json:"to"`
+	} `json:"timestamps"`
+	Offsets struct {
+		From int `json:"from"`
+		To   int `json:"to"`
+	} `json:"offsets"`
+	Text string `json:"text"`
+}
+
 func (w *Whisper) parseOutput(data []byte) (*Result, error) {
 	var out whisperOutput
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("failed to parse whisper JSON: %w", err)
 	}
 
+	// whisper-cpp format: "transcription" array with timestamps
+	if len(out.Transcription) > 0 {
+		return parseWhisperCPPOutput(out), nil
+	}
+
+	// OpenAI whisper / whisperx format: "segments" array with start/end floats
 	result := &Result{
 		Text:     strings.TrimSpace(out.Text),
 		Language: out.Language,
@@ -414,8 +445,49 @@ func (w *Whisper) parseOutput(data []byte) (*Result, error) {
 			Text:  strings.TrimSpace(seg.Text),
 		})
 	}
+	// whisperx may omit top-level "text"; rebuild from segments
+	if result.Text == "" && len(result.Segments) > 0 {
+		var b strings.Builder
+		for i, seg := range result.Segments {
+			if i > 0 {
+				b.WriteString(" ")
+			}
+			b.WriteString(seg.Text)
+		}
+		result.Text = b.String()
+	}
 	if len(result.Segments) > 0 {
 		result.Duration = result.Segments[len(result.Segments)-1].End
 	}
 	return result, nil
+}
+
+func parseWhisperCPPOutput(out whisperOutput) *Result {
+	result := &Result{
+		Language: out.Result.Language,
+	}
+	var fullText strings.Builder
+	for _, seg := range out.Transcription {
+		text := strings.TrimSpace(seg.Text)
+		if text == "" {
+			continue
+		}
+		// offsets are in milliseconds
+		start := float64(seg.Offsets.From) / 1000.0
+		end := float64(seg.Offsets.To) / 1000.0
+		result.Segments = append(result.Segments, Segment{
+			Start: start,
+			End:   end,
+			Text:  text,
+		})
+		if fullText.Len() > 0 {
+			fullText.WriteString(" ")
+		}
+		fullText.WriteString(text)
+	}
+	result.Text = fullText.String()
+	if len(result.Segments) > 0 {
+		result.Duration = result.Segments[len(result.Segments)-1].End
+	}
+	return result
 }

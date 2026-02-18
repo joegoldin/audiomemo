@@ -130,7 +130,7 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		return os.WriteFile(tOutput, []byte(output), 0644)
 	}
 
-	fmt.Print(output)
+	fmt.Println(output)
 	return nil
 }
 

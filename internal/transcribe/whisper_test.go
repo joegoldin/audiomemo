@@ -202,6 +202,90 @@ func TestParseFFmpegWhisperOutputEmpty(t *testing.T) {
 	}
 }
 
+func TestParseOutputWhisperCPPFormat(t *testing.T) {
+	w := &Whisper{variant: variantWhisperCPP}
+	data := []byte(`{
+		"result": {"language": "en"},
+		"transcription": [
+			{
+				"timestamps": {"from": "00:00:00.000", "to": "00:00:03.200"},
+				"offsets": {"from": 0, "to": 3200},
+				"text": " Hello world"
+			},
+			{
+				"timestamps": {"from": "00:00:03.200", "to": "00:00:06.500"},
+				"offsets": {"from": 3200, "to": 6500},
+				"text": " How are you"
+			}
+		]
+	}`)
+	result, err := w.parseOutput(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Language != "en" {
+		t.Errorf("language = %q, want 'en'", result.Language)
+	}
+	if result.Text != "Hello world How are you" {
+		t.Errorf("text = %q, want 'Hello world How are you'", result.Text)
+	}
+	if len(result.Segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(result.Segments))
+	}
+	if result.Segments[0].Start != 0 || result.Segments[0].End != 3.2 {
+		t.Errorf("segment 0: start=%f end=%f, want 0/3.2", result.Segments[0].Start, result.Segments[0].End)
+	}
+	if result.Segments[1].Text != "How are you" {
+		t.Errorf("segment 1 text = %q", result.Segments[1].Text)
+	}
+	if result.Duration < 6.499 || result.Duration > 6.501 {
+		t.Errorf("duration = %f, want 6.5", result.Duration)
+	}
+}
+
+func TestParseOutputOpenAIFormat(t *testing.T) {
+	w := &Whisper{variant: variantWhisper}
+	data := []byte(`{
+		"text": "Hello world. How are you?",
+		"language": "en",
+		"segments": [
+			{"start": 0.0, "end": 3.0, "text": " Hello world."},
+			{"start": 3.0, "end": 6.0, "text": " How are you?"}
+		]
+	}`)
+	result, err := w.parseOutput(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "Hello world. How are you?" {
+		t.Errorf("text = %q", result.Text)
+	}
+	if len(result.Segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(result.Segments))
+	}
+	if result.Duration != 6.0 {
+		t.Errorf("duration = %f, want 6.0", result.Duration)
+	}
+}
+
+func TestParseOutputWhisperXNoTopText(t *testing.T) {
+	w := &Whisper{variant: variantWhisperX}
+	data := []byte(`{
+		"language": "en",
+		"segments": [
+			{"start": 0.0, "end": 3.0, "text": "Hello"},
+			{"start": 3.0, "end": 6.0, "text": "World"}
+		]
+	}`)
+	result, err := w.parseOutput(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "Hello World" {
+		t.Errorf("text = %q, want 'Hello World'", result.Text)
+	}
+}
+
 func TestResolveWhisperCPPModelPath(t *testing.T) {
 	// Direct path should pass through
 	p := resolveWhisperCPPModel("/some/path/ggml-base.bin")

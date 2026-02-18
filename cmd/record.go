@@ -162,6 +162,9 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Saved: %s\n", outputPath)
+	// Print just the path to stdout so it can be piped, e.g.:
+	//   transcribe $(record)
+	fmt.Println(outputPath)
 
 	if rTranscribe {
 		return runPostTranscribe(outputPath)
