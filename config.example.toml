@@ -1,0 +1,27 @@
+[record]
+format = "ogg"
+sample_rate = 48000
+channels = 1
+output_dir = "~/Recordings"
+# device = "Built-in Microphone"
+
+[transcribe]
+# default_backend = "deepgram"
+# language = "en"
+# output_format = "text"
+
+[transcribe.whisper]
+# model = "base"
+# binary = "whisper"
+
+[transcribe.deepgram]
+# api_key = ""
+# model = "nova-3"
+
+[transcribe.openai]
+# api_key = ""
+# model = "gpt-4o-transcribe"
+
+[transcribe.mistral]
+# api_key = ""
+# model = "voxtral-mini-latest"
