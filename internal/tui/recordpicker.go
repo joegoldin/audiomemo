@@ -107,28 +107,50 @@ func (m *recordPickerModel) buildItems(devices []record.Device) {
 		aliased[raw] = true
 	}
 
-	// 1. Aliases — sorted alphabetically, each resolves to 1 device.
-	aliases := make([]string, 0, len(m.config.Devices))
-	for a := range m.config.Devices {
-		aliases = append(aliases, a)
-	}
-	sort.Strings(aliases)
-	for _, alias := range aliases {
-		raw := m.config.Devices[alias]
-		m.items = append(m.items, rpItem{
-			label:   alias,
-			kind:    "alias",
-			devices: []string{raw},
-		})
+	def := m.config.Record.Device // configured default (alias, group, or raw name)
+
+	// 1. Default — always first if configured.
+	if def != "" {
+		if _, isAlias := m.config.Devices[def]; isAlias {
+			m.items = append(m.items, rpItem{
+				label:   def,
+				kind:    "default",
+				devices: []string{m.config.Devices[def]},
+			})
+		} else if members, isGroup := m.config.DeviceGroups[def]; isGroup {
+			var resolved []string
+			for _, alias := range members {
+				if raw, ok := m.config.Devices[alias]; ok {
+					resolved = append(resolved, raw)
+				}
+			}
+			if len(resolved) > 0 {
+				m.items = append(m.items, rpItem{
+					label:   def,
+					kind:    "default",
+					devices: resolved,
+				})
+			}
+		} else {
+			// Raw device name as default.
+			m.items = append(m.items, rpItem{
+				label:   def,
+				kind:    "default",
+				devices: []string{def},
+			})
+		}
 	}
 
-	// 2. Groups — sorted alphabetically, each resolves to N devices.
+	// 2. Groups — sorted alphabetically.
 	groupNames := make([]string, 0, len(m.config.DeviceGroups))
 	for g := range m.config.DeviceGroups {
 		groupNames = append(groupNames, g)
 	}
 	sort.Strings(groupNames)
 	for _, gName := range groupNames {
+		if gName == def {
+			continue // already listed as default
+		}
 		members := m.config.DeviceGroups[gName]
 		var resolved []string
 		for _, alias := range members {
@@ -145,27 +167,48 @@ func (m *recordPickerModel) buildItems(devices []record.Device) {
 		}
 	}
 
-	// 3. Raw source devices not covered by an alias, sorted by description.
-	var raw []record.Device
+	// 3. Aliases — sorted alphabetically, skip the default.
+	aliases := make([]string, 0, len(m.config.Devices))
+	for a := range m.config.Devices {
+		aliases = append(aliases, a)
+	}
+	sort.Strings(aliases)
+	for _, alias := range aliases {
+		if alias == def {
+			continue // already listed as default
+		}
+		raw := m.config.Devices[alias]
+		m.items = append(m.items, rpItem{
+			label:   alias,
+			kind:    "alias",
+			devices: []string{raw},
+		})
+	}
+
+	// 4. Raw source devices not covered by an alias, sorted by description.
+	var rawDevs []record.Device
 	for _, d := range devices {
 		if !d.IsMonitor && !aliased[d.Name] {
-			raw = append(raw, d)
+			rawDevs = append(rawDevs, d)
 		}
 	}
-	sort.Slice(raw, func(i, j int) bool {
-		di, dj := raw[i].Description, raw[j].Description
+	sort.Slice(rawDevs, func(i, j int) bool {
+		di, dj := rawDevs[i].Description, rawDevs[j].Description
 		if di == "" {
-			di = raw[i].Name
+			di = rawDevs[i].Name
 		}
 		if dj == "" {
-			dj = raw[j].Name
+			dj = rawDevs[j].Name
 		}
 		return di < dj
 	})
-	for _, d := range raw {
+	for _, d := range rawDevs {
 		label := d.Description
 		if label == "" {
 			label = d.Name
+		}
+		if label == def {
+			continue // already listed as default
 		}
 		m.items = append(m.items, rpItem{
 			label:   label,
@@ -251,10 +294,7 @@ func (m *recordPickerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.state = RPDone
 		return m, tea.Quit
 	case " ":
-		m.selected[m.cursor] = !m.selected[m.cursor]
-		if !m.selected[m.cursor] {
-			delete(m.selected, m.cursor)
-		}
+		m.toggleSelect(m.cursor)
 	case "enter":
 		m.finishSelection()
 		m.state = RPDone
@@ -268,6 +308,65 @@ func (m *recordPickerModel) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// toggleSelect toggles multi-select on the given item index. When a group
+// (or default-that-is-a-group) is toggled on, its member aliases are also
+// selected. When toggled off, the members are deselected. Conversely, when
+// an alias belonging to a selected group is deselected, the group is too.
+func (m *recordPickerModel) toggleSelect(idx int) {
+	if idx >= len(m.items) {
+		return
+	}
+	item := m.items[idx]
+	selecting := !m.selected[idx]
+
+	if selecting {
+		m.selected[idx] = true
+	} else {
+		delete(m.selected, idx)
+	}
+
+	// If this item is a group (or default pointing to a group), cascade to aliases.
+	groupMembers := m.groupMembersFor(item)
+	if len(groupMembers) > 0 {
+		for i, it := range m.items {
+			if (it.kind == "alias" || it.kind == "default") && i != idx {
+				for _, member := range groupMembers {
+					if it.label == member {
+						if selecting {
+							m.selected[i] = true
+						} else {
+							delete(m.selected, i)
+						}
+					}
+				}
+			}
+		}
+		return
+	}
+
+	// If this is an alias being deselected, deselect any group that contains it.
+	if !selecting && (item.kind == "alias" || item.kind == "default") {
+		for i, it := range m.items {
+			gm := m.groupMembersFor(it)
+			for _, member := range gm {
+				if member == item.label {
+					delete(m.selected, i)
+					break
+				}
+			}
+		}
+	}
+}
+
+// groupMembersFor returns the group member alias names if the item represents
+// a group (directly or as the default), or nil otherwise.
+func (m *recordPickerModel) groupMembersFor(item rpItem) []string {
+	if members, ok := m.config.DeviceGroups[item.label]; ok {
+		return members
+	}
+	return nil
 }
 
 // hotkeyIndex converts a hotkey character to an item index.
@@ -374,8 +473,9 @@ func (m *recordPickerModel) viewPick() string {
 		kind  string
 	}
 	sections := []section{
-		{"ALIASES", "alias"},
+		{"DEFAULT", "default"},
 		{"GROUPS", "group"},
+		{"ALIASES", "alias"},
 		{"DEVICES", "device"},
 	}
 
