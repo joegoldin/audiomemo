@@ -2,6 +2,7 @@ package transcribe
 
 import (
 	"fmt"
+	"os/exec"
 
 	"github.com/joegilkes/audiotools/internal/config"
 )
@@ -38,7 +39,30 @@ func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, err
 func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 	switch name {
 	case "whisper":
-		return NewWhisper(cfg.Transcribe.Whisper.Binary, cfg.Transcribe.Whisper.Model), nil
+		// Auto-detect best whisper variant
+		if w, found := DetectWhisper(cfg.Transcribe.Whisper.Model); found {
+			return w, nil
+		}
+		// Fall back to configured binary or "whisper"
+		binary := cfg.Transcribe.Whisper.Binary
+		if binary == "" {
+			binary = "whisper"
+		}
+		return NewWhisper(binary, cfg.Transcribe.Whisper.Model), nil
+	case "whisper-cpp":
+		binary := cfg.Transcribe.Whisper.Binary
+		if binary == "" {
+			binary = "whisper-cli"
+		}
+		return NewWhisper(binary, cfg.Transcribe.Whisper.Model), nil
+	case "whisperx":
+		return NewWhisper("whisperx", cfg.Transcribe.Whisper.Model), nil
+	case "ffmpeg-whisper":
+		binary := "ffmpeg"
+		if b, err := exec.LookPath("ffmpeg"); err == nil {
+			binary = b
+		}
+		return &Whisper{binary: binary, variant: variantFFmpegWhisper, defaultModel: cfg.Transcribe.Whisper.Model}, nil
 	case "deepgram":
 		if cfg.Transcribe.Deepgram.APIKey == "" {
 			return nil, fmt.Errorf("deepgram API key not configured")
@@ -55,6 +79,6 @@ func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 		}
 		return NewMistral(cfg.Transcribe.Mistral.APIKey, cfg.Transcribe.Mistral.Model), nil
 	default:
-		return nil, fmt.Errorf("unknown backend: %s", name)
+		return nil, fmt.Errorf("unknown backend: %s (available: whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)", name)
 	}
 }

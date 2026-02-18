@@ -1,6 +1,7 @@
 package transcribe
 
 import (
+	"os/exec"
 	"testing"
 
 	"github.com/joegilkes/audiotools/internal/config"
@@ -64,6 +65,17 @@ func TestAutoDetectPriorityOrder(t *testing.T) {
 }
 
 func TestAutoDetectNoBackendAvailable(t *testing.T) {
+	// Skip if any whisper binary is on PATH (e.g. in nix dev shell)
+	for _, name := range []string{"whisper-cli", "whisper", "whisperx"} {
+		if _, err := exec.LookPath(name); err == nil {
+			t.Skipf("%s is on PATH, auto-detect will find it", name)
+		}
+	}
+	if path, err := exec.LookPath("ffmpeg"); err == nil {
+		if ffmpegHasWhisperFilter(path) {
+			t.Skip("ffmpeg has whisper filter, auto-detect will find it")
+		}
+	}
 	cfg := config.Default()
 	_, err := NewDispatcher(cfg, "")
 	if err == nil {

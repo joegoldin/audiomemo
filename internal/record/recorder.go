@@ -27,6 +27,8 @@ type Recorder struct {
 	stderr io.ReadCloser
 	Level  chan float64
 	Done   chan error
+	done   chan struct{} // closed when ffmpeg exits; safe for multiple waiters
+	exitErr error
 }
 
 func InputFormat() string {
@@ -77,6 +79,11 @@ func BuildFFmpegArgs(opts RecordOpts) []string {
 		args = append(args, "-b:a", "64k")
 	}
 
+	// Reset output timestamps to start from 0; PulseAudio may provide
+	// timestamps based on stream start time, causing large PTS offsets
+	// that break downstream tools expecting timestamps starting at 0.
+	args = append(args, "-output_ts_offset", "0")
+
 	args = append(args, "-y", opts.OutputPath)
 	return args
 }
@@ -111,6 +118,7 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		stderr: stderr,
 		Level:  make(chan float64, 10),
 		Done:   make(chan error, 1),
+		done:   make(chan struct{}),
 	}
 
 	if err := cmd.Start(); err != nil {
@@ -119,7 +127,9 @@ func Start(opts RecordOpts) (*Recorder, error) {
 
 	go r.parseStderr()
 	go func() {
-		r.Done <- cmd.Wait()
+		r.exitErr = cmd.Wait()
+		r.Done <- r.exitErr
+		close(r.done)
 	}()
 
 	return r, nil
@@ -147,6 +157,12 @@ func (r *Recorder) Pause() {
 
 func (r *Recorder) Stop() {
 	r.stdin.Write([]byte("q"))
+}
+
+// Wait blocks until ffmpeg has fully exited and the output file is finalized.
+func (r *Recorder) Wait() error {
+	<-r.done
+	return r.exitErr
 }
 
 func EnsureOutputDir(dir string) error {

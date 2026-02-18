@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/joegilkes/audiotools/internal/config"
 	"github.com/joegilkes/audiotools/internal/transcribe"
@@ -39,7 +40,7 @@ Examples:
 }
 
 func init() {
-	transcribeCmd.Flags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (whisper, deepgram, openai, mistral)")
+	transcribeCmd.Flags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
 	transcribeCmd.Flags().StringVarP(&tModel, "model", "m", "", "model name (backend-specific)")
 	transcribeCmd.Flags().StringVarP(&tLanguage, "language", "l", "", "language hint (ISO 639-1)")
 	transcribeCmd.Flags().StringVarP(&tOutput, "output", "o", "", "output file (default: stdout)")
@@ -88,9 +89,7 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	if tVerbose {
-		fmt.Fprintf(os.Stderr, "Using backend: %s\n", backend.Name())
-	}
+	fmt.Fprintf(os.Stderr, "Transcribing with %s...\n", backend.Name())
 
 	opts := transcribe.TranscribeOpts{
 		Model:    tModel,
@@ -98,10 +97,32 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		Format:   transcribe.ParseFormat(tFormat),
 	}
 
+	start := time.Now()
+
+	// Show elapsed time ticker for backends that don't print their own progress
+	done := make(chan struct{})
+	go func() {
+		ticker := time.NewTicker(5 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case t := <-ticker.C:
+				elapsed := t.Sub(start).Truncate(time.Second)
+				fmt.Fprintf(os.Stderr, "  %s elapsed...\n", elapsed)
+			}
+		}
+	}()
+
 	result, err := backend.Transcribe(ctx, audioPath, opts)
+	close(done)
 	if err != nil {
 		return err
 	}
+
+	elapsed := time.Since(start).Truncate(time.Millisecond)
+	fmt.Fprintf(os.Stderr, "Done in %s\n", elapsed)
 
 	output := result.Format(opts.Format)
 

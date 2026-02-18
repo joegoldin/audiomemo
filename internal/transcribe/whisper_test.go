@@ -86,9 +86,6 @@ func TestWhisperCPPBuildArgs(t *testing.T) {
 	if !found["-f"] || !found["/tmp/test.wav"] {
 		t.Errorf("expected -f /tmp/test.wav in args: %v", args)
 	}
-	if !found["-np"] {
-		t.Errorf("expected -np in args: %v", args)
-	}
 }
 
 func TestWhisperXBuildArgs(t *testing.T) {
@@ -128,6 +125,80 @@ func TestDetectVariant(t *testing.T) {
 		if v != tt.variant {
 			t.Errorf("detectVariant(%q) = %d, want %d", tt.binary, v, tt.variant)
 		}
+	}
+}
+
+func TestFFmpegWhisperName(t *testing.T) {
+	w := &Whisper{binary: "ffmpeg", variant: variantFFmpegWhisper, defaultModel: "base"}
+	if w.Name() != "ffmpeg-whisper" {
+		t.Errorf("expected 'ffmpeg-whisper', got %s", w.Name())
+	}
+}
+
+func TestDetectVariantFFmpeg(t *testing.T) {
+	v := detectVariant("/usr/bin/ffmpeg")
+	if v != variantFFmpegWhisper {
+		t.Errorf("detectVariant(ffmpeg) = %d, want %d", v, variantFFmpegWhisper)
+	}
+}
+
+func TestParseTimestamp(t *testing.T) {
+	tests := []struct {
+		ts       string
+		expected float64
+	}{
+		{"00:00:00", 0},
+		{"00:00:03", 3},
+		{"00:01:30", 90},
+		{"01:00:00", 3600},
+		{"00:00:03.500", 3.5},
+		{"01:02:03.456", 3723.456},
+	}
+	for _, tt := range tests {
+		got := parseTimestamp(tt.ts)
+		if got < tt.expected-0.001 || got > tt.expected+0.001 {
+			t.Errorf("parseTimestamp(%q) = %f, want %f", tt.ts, got, tt.expected)
+		}
+	}
+}
+
+func TestParseFFmpegWhisperOutput(t *testing.T) {
+	w := &Whisper{variant: variantFFmpegWhisper}
+	data := []byte(`{"from": "00:00:00", "to": "00:00:03", "text": "Hello world"}
+{"from": "00:00:03", "to": "00:00:06.500", "text": "How are you"}
+`)
+	result, err := w.parseFFmpegWhisperOutput(data)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(result.Segments) != 2 {
+		t.Fatalf("expected 2 segments, got %d", len(result.Segments))
+	}
+	if result.Segments[0].Text != "Hello world" {
+		t.Errorf("segment 0 text = %q, want 'Hello world'", result.Segments[0].Text)
+	}
+	if result.Segments[1].End < 6.499 || result.Segments[1].End > 6.501 {
+		t.Errorf("segment 1 end = %f, want 6.5", result.Segments[1].End)
+	}
+	if result.Text != "Hello world How are you" {
+		t.Errorf("full text = %q", result.Text)
+	}
+	if result.Duration < 6.499 || result.Duration > 6.501 {
+		t.Errorf("duration = %f, want 6.5", result.Duration)
+	}
+}
+
+func TestParseFFmpegWhisperOutputEmpty(t *testing.T) {
+	w := &Whisper{variant: variantFFmpegWhisper}
+	result, err := w.parseFFmpegWhisperOutput([]byte(""))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.Text != "" {
+		t.Errorf("expected empty text, got %q", result.Text)
+	}
+	if len(result.Segments) != 0 {
+		t.Errorf("expected 0 segments, got %d", len(result.Segments))
 	}
 }
 

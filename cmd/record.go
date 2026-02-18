@@ -146,8 +146,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 
 	if rNoTUI {
 		fmt.Fprintf(os.Stderr, "Recording to %s (Ctrl+C to stop)...\n", outputPath)
-		err := <-rec.Done
-		if err != nil {
+		if err := <-rec.Done; err != nil {
 			return err
 		}
 	} else {
@@ -155,6 +154,10 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return err
+		}
+		// Wait for ffmpeg to fully exit and finalize the output file
+		if err := rec.Wait(); err != nil {
+			return fmt.Errorf("recording failed: %w", err)
 		}
 	}
 
