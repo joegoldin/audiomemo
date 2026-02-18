@@ -32,9 +32,15 @@ type Model struct {
 	anim       *Animation
 	picker     *DevicePicker
 	showPicker bool
+	transcribe bool // set when user presses Q to quit-and-transcribe
 	err        error
 	width      int
 	height     int
+}
+
+// ShouldTranscribe returns true if the user pressed Q to quit-and-transcribe.
+func (m *Model) ShouldTranscribe() bool {
+	return m.transcribe
 }
 
 type tickMsg time.Time
@@ -47,8 +53,8 @@ func NewModel(rec *record.Recorder, opts record.RecordOpts) *Model {
 		recorder:  rec,
 		opts:      opts,
 		startTime: time.Now(),
-		vu:        NewVUMeter(10),
-		anim:      NewAnimation(30, 8),
+		vu:        NewVUMeter(50),
+		anim:      NewAnimation(50, 7),
 		picker:    NewDevicePicker(),
 	}
 }
@@ -58,7 +64,7 @@ func (m *Model) Init() tea.Cmd {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(time.Millisecond*50, func(t time.Time) tea.Msg {
+	return tea.Tick(time.Millisecond*33, func(t time.Time) tea.Msg {
 		return tickMsg(t)
 	})
 }
@@ -116,9 +122,20 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch {
-	case key.Matches(msg, key.NewBinding(key.WithKeys("q", "ctrl+c"))):
+	case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))):
 		m.recorder.Stop()
 		m.state = StateSaved
+		return m, tea.Quit
+
+	case key.Matches(msg, key.NewBinding(key.WithKeys("q"))):
+		m.recorder.Stop()
+		m.state = StateSaved
+		return m, tea.Quit
+
+	case key.Matches(msg, key.NewBinding(key.WithKeys("Q"))):
+		m.recorder.Stop()
+		m.state = StateSaved
+		m.transcribe = true
 		return m, tea.Quit
 
 	case key.Matches(msg, key.NewBinding(key.WithKeys("p", " "))):
@@ -184,15 +201,15 @@ func (m *Model) View() string {
 	// VU
 	vuView := m.vu.Render(m.level)
 
-	// Combine animation and VU side by side
-	center := lipgloss.JoinHorizontal(lipgloss.Top, animView, "  ", vuView)
+	// Stack animation and VU vertically
+	center := lipgloss.JoinVertical(lipgloss.Left, animView, "  "+vuView)
 
 	// Info
 	micLine := infoStyle.Render(fmt.Sprintf("  mic: %s", m.opts.Device))
 	outLine := infoStyle.Render(fmt.Sprintf("  out: %s", m.opts.OutputPath))
 
 	// Keys
-	keys := dimStyle.Render("  [p]ause  [q]uit  [d]evices")
+	keys := dimStyle.Render("  [p]ause  [q]uit  [Q]uit+transcribe  [d]evices")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header, "", center, "", micLine, outLine, "", keys,

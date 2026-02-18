@@ -69,7 +69,7 @@ func BuildFFmpegArgs(opts RecordOpts) []string {
 	args := []string{
 		"-f", inputFmt,
 		"-i", inputDevice,
-		"-af", "astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
+		"-af", "asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
 		"-c:a", codec,
 		"-ar", strconv.Itoa(opts.SampleRate),
 		"-ac", strconv.Itoa(opts.Channels),

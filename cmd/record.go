@@ -144,6 +144,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	shouldTranscribe := rTranscribe
 	if rNoTUI {
 		fmt.Fprintf(os.Stderr, "Recording to %s (Ctrl+C to stop)...\n", outputPath)
 		if err := <-rec.Done; err != nil {
@@ -159,6 +160,9 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		if err := rec.Wait(); err != nil {
 			return fmt.Errorf("recording failed: %w", err)
 		}
+		if model.ShouldTranscribe() {
+			shouldTranscribe = true
+		}
 	}
 
 	fmt.Fprintf(os.Stderr, "Saved: %s\n", outputPath)
@@ -166,7 +170,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	//   transcribe $(record)
 	fmt.Println(outputPath)
 
-	if rTranscribe {
+	if shouldTranscribe {
 		return runPostTranscribe(outputPath)
 	}
 

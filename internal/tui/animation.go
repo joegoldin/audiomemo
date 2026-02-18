@@ -2,60 +2,85 @@ package tui
 
 import (
 	"math"
-	"math/rand"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Block height characters for smooth vertical resolution per column
+var heightBlocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+
 var (
-	animLow  = lipgloss.NewStyle().Foreground(lipgloss.Color("#4c1d95"))
-	animMid  = lipgloss.NewStyle().Foreground(lipgloss.Color("#7c3aed"))
-	animHigh = lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa"))
-	animPeak = lipgloss.NewStyle().Foreground(lipgloss.Color("#c4b5fd"))
-	animDim  = lipgloss.NewStyle().Foreground(lipgloss.Color("#2e1065"))
+	waveDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#1e1b4b"))
+	waveLow    = lipgloss.NewStyle().Foreground(lipgloss.Color("#4c1d95"))
+	waveMid    = lipgloss.NewStyle().Foreground(lipgloss.Color("#7c3aed"))
+	waveHigh   = lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa"))
+	wavePeak   = lipgloss.NewStyle().Foreground(lipgloss.Color("#c4b5fd"))
+	waveSilent = lipgloss.NewStyle().Foreground(lipgloss.Color("#2e1065"))
 )
 
-const barBlock = '█'
 const flatLine = '─'
 
+// Animation displays a scrolling waveform of recent audio levels.
+// Each column represents one level sample, rendered as a mirrored
+// bar growing up and down from the center line.
 type Animation struct {
-	width     int
-	height    int
-	pauseTick int
-	// Per-column "energy" values for spectroscope bars
-	bars []float64
-	// Smoothed targets for organic movement
-	targets []float64
-	rng     *rand.Rand
+	width  int
+	height int
+	// Circular buffer of recent level values (0..1)
+	history []float64
+	cursor  int
+	// Smoothed level for current frame
+	smoothed float64
+	// Track last pushed level to avoid filling with stale repeats
+	lastLevel float64
+	staleCount int
 }
 
 func NewAnimation(width, height int) *Animation {
-	a := &Animation{
+	return &Animation{
 		width:   width,
 		height:  height,
-		bars:    make([]float64, width),
-		targets: make([]float64, width),
-		rng:     rand.New(rand.NewSource(42)),
+		history: make([]float64, width),
 	}
-	return a
+}
+
+// Push adds a new level sample to the scrolling history.
+func (a *Animation) Push(level float64) {
+	// Smooth the input (moderate attack, gradual decay)
+	diff := level - a.smoothed
+	if diff > 0 {
+		a.smoothed += diff * 0.5
+	} else {
+		a.smoothed += diff * 0.15
+	}
+	a.smoothed = math.Max(0, math.Min(1, a.smoothed))
+
+	a.history[a.cursor] = a.smoothed
+	a.cursor = (a.cursor + 1) % a.width
 }
 
 func (a *Animation) Render(tick int, level float64, paused bool) string {
-	activeTick := tick
-	if paused {
-		activeTick = a.pauseTick
-	} else {
-		a.pauseTick = tick
+	if !paused {
+		// Only push a new column when the level actually changed,
+		// so repeated ticks with stale data don't flood the buffer.
+		if level != a.lastLevel {
+			a.lastLevel = level
+			a.staleCount = 0
+			a.Push(level)
+		} else {
+			a.staleCount++
+			// Still push occasionally so the waveform scrolls during
+			// sustained tones, but decay toward silence smoothly.
+			if a.staleCount%3 == 0 {
+				a.Push(level)
+			}
+		}
 	}
 
 	centerY := a.height / 2
 
-	// Update bar targets based on audio level
-	if !paused {
-		a.updateBars(activeTick, level)
-	}
-
+	// Build grid
 	grid := make([][]rune, a.height)
 	for y := range grid {
 		grid[y] = make([]rune, a.width)
@@ -64,25 +89,26 @@ func (a *Animation) Render(tick int, level float64, paused bool) string {
 		}
 	}
 
-	// Draw flat center line when quiet, spectroscope bars when loud
-	for x := 0; x < a.width; x++ {
-		barHeight := a.bars[x]
+	// Draw each column from the history buffer (oldest to newest)
+	for col := 0; col < a.width; col++ {
+		idx := (a.cursor + col) % a.width
+		h := a.history[idx]
 
-		if barHeight < 0.05 {
-			// Flat line at center
-			grid[centerY][x] = flatLine
+		if h < 0.02 {
+			// Flat center line when silent
+			grid[centerY][col] = flatLine
 		} else {
-			// Draw bars extending up and down from center (mirrored)
-			extent := int(math.Round(barHeight * float64(centerY)))
+			// Mirrored bars from center
+			extent := int(math.Round(h * float64(centerY)))
 			if extent < 1 {
 				extent = 1
 			}
 			for dy := 0; dy <= extent && centerY-dy >= 0 && centerY+dy < a.height; dy++ {
 				if dy == 0 {
-					grid[centerY][x] = barBlock
+					grid[centerY][col] = '█'
 				} else {
-					grid[centerY-dy][x] = barBlock
-					grid[centerY+dy][x] = barBlock
+					grid[centerY-dy][col] = '█'
+					grid[centerY+dy][col] = '█'
 				}
 			}
 		}
@@ -91,74 +117,34 @@ func (a *Animation) Render(tick int, level float64, paused bool) string {
 	// Render with color based on row distance from center
 	var lines []string
 	for y, row := range grid {
-		dist := math.Abs(float64(y-centerY)) / float64(centerY)
+		dist := math.Abs(float64(y-centerY)) / math.Max(1, float64(centerY))
 		var style lipgloss.Style
 		switch {
-		case dist > 0.75:
-			style = animPeak
-		case dist > 0.5:
-			style = animHigh
-		case dist > 0.2:
-			style = animMid
+		case dist > 0.8:
+			style = wavePeak
+		case dist > 0.55:
+			style = waveHigh
+		case dist > 0.3:
+			style = waveMid
+		case dist > 0.05:
+			style = waveLow
 		default:
-			style = animLow
+			style = waveDim
 		}
 
-		// Dim the flat-line character
-		line := string(row)
-		hasContent := false
+		// Use dim style for flat-line-only rows
+		hasBar := false
 		for _, r := range row {
-			if r != ' ' && r != flatLine {
-				hasContent = true
+			if r == '█' {
+				hasBar = true
 				break
 			}
 		}
-		if !hasContent {
-			style = animDim
+		if !hasBar {
+			style = waveSilent
 		}
 
-		lines = append(lines, style.Render(line))
+		lines = append(lines, style.Render(string(row)))
 	}
 	return strings.Join(lines, "\n")
-}
-
-func (a *Animation) updateBars(tick int, level float64) {
-	// Generate new random targets periodically
-	phase := float64(tick) * 0.2
-
-	for x := 0; x < a.width; x++ {
-		xf := float64(x)
-
-		// Multiple frequency components for spectroscope look
-		f1 := math.Sin(xf*0.3+phase) * 0.5
-		f2 := math.Sin(xf*0.7+phase*1.6+2.0) * 0.3
-		f3 := math.Sin(xf*1.1+phase*0.7+4.0) * 0.2
-
-		// Random jitter for organic feel
-		jitter := (a.rng.Float64() - 0.5) * 0.3
-
-		// Target bar height: 0 when silent, full spectroscope when loud
-		raw := (f1 + f2 + f3 + jitter + 1.0) / 2.0 // normalize to 0..1
-		target := raw * level
-
-		a.targets[x] = target
-
-		// Smooth interpolation toward target (fast attack, slow decay)
-		diff := a.targets[x] - a.bars[x]
-		if diff > 0 {
-			// Attack: fast rise
-			a.bars[x] += diff * 0.6
-		} else {
-			// Decay: slow fall
-			a.bars[x] += diff * 0.15
-		}
-
-		// Clamp
-		if a.bars[x] < 0 {
-			a.bars[x] = 0
-		}
-		if a.bars[x] > 1 {
-			a.bars[x] = 1
-		}
-	}
 }

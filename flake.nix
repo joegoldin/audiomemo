@@ -51,7 +51,7 @@
             mkdir -p /tmp/audiotools-test-home/.local/share/whisper-cpp
             cp ${pkgs.fetchurl {
               url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
-              hash = "sha256-IN0Gm8bVzPbflJtqIVbuQmsqbiJFOL+kTCAksFmhdSU=";
+              hash = "sha256-YO1bw90U7qhWST0zQ0m0BXgt3K8AKNS130CINF+6Lv4=";
             }} /tmp/audiotools-test-home/.local/share/whisper-cpp/ggml-base.bin
 
             go test -v -count=1 -timeout 300s ./...

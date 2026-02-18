@@ -1,33 +1,36 @@
 package tui
 
 import (
+	"fmt"
+	"math"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
 )
 
+// Fractional block characters for smooth sub-character fill
+var barBlocks = []rune{' ', '▏', '▎', '▍', '▌', '▋', '▊', '▉', '█'}
+
 var (
 	vuGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
 	vuYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308"))
 	vuRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
-	vuDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#404040"))
-)
-
-const (
-	vuBlock = "████"
-	vuEmpty = "┃   "
+	vuDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
+	vuDBText = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 )
 
 type VUMeter struct {
-	height int
+	width      int
+	smoothed   float64
+	smoothedDB float64
+	hasValue   bool
 }
 
-func NewVUMeter(height int) *VUMeter {
-	return &VUMeter{height: height}
+func NewVUMeter(width int) *VUMeter {
+	return &VUMeter{width: width, smoothedDB: -60}
 }
 
 func dbToLevel(db float64) float64 {
-	// Map -60..0 dB to 0..1
 	const minDB = -60.0
 	if db <= minDB {
 		return 0
@@ -40,25 +43,57 @@ func dbToLevel(db float64) float64 {
 
 func (v *VUMeter) Render(db float64) string {
 	level := dbToLevel(db)
-	filled := int(level * float64(v.height))
 
-	var lines []string
-	for i := v.height - 1; i >= 0; i-- {
-		if i < filled {
-			pct := float64(i) / float64(v.height)
-			var style lipgloss.Style
-			switch {
-			case pct >= 0.8:
-				style = vuRed
-			case pct >= 0.5:
-				style = vuYellow
-			default:
-				style = vuGreen
-			}
-			lines = append(lines, style.Render(vuBlock))
+	// Smooth interpolation (moderate attack, slow decay)
+	diff := level - v.smoothed
+	if diff > 0 {
+		v.smoothed += diff * 0.45
+	} else {
+		v.smoothed += diff * 0.12
+	}
+	v.smoothed = math.Max(0, math.Min(1, v.smoothed))
+
+	// Smooth dB for display
+	clampedDB := math.Max(-60, math.Min(0, db))
+	dbDiff := clampedDB - v.smoothedDB
+	if dbDiff > 0 {
+		v.smoothedDB += dbDiff * 0.45
+	} else {
+		v.smoothedDB += dbDiff * 0.12
+	}
+
+	fillFloat := v.smoothed * float64(v.width)
+	fullBlocks := int(fillFloat)
+	frac := fillFloat - float64(fullBlocks)
+	fracIdx := int(frac * float64(len(barBlocks)-1))
+
+	var b strings.Builder
+	for i := 0; i < v.width; i++ {
+		pct := float64(i) / float64(v.width)
+		var style lipgloss.Style
+		switch {
+		case pct >= 0.85:
+			style = vuRed
+		case pct >= 0.6:
+			style = vuYellow
+		default:
+			style = vuGreen
+		}
+
+		if i < fullBlocks {
+			b.WriteString(style.Render("█"))
+		} else if i == fullBlocks && fracIdx > 0 {
+			b.WriteString(style.Render(string(barBlocks[fracIdx])))
 		} else {
-			lines = append(lines, vuDim.Render(vuEmpty))
+			b.WriteString(vuDim.Render("░"))
 		}
 	}
-	return strings.Join(lines, "\n")
+
+	// Show smoothed dB value
+	dbStr := "  -∞"
+	if v.smoothedDB > -59 {
+		dbStr = fmt.Sprintf(" %4.1fdB", v.smoothedDB)
+	}
+
+	return b.String() + vuDBText.Render(dbStr)
 }

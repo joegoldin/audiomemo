@@ -5,7 +5,10 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"os/signal"
+	"runtime"
+	"strings"
 	"time"
 
 	"github.com/joegilkes/audiotools/internal/config"
@@ -20,6 +23,7 @@ var (
 	tOutput   string
 	tFormat   string
 	tVerbose  bool
+	tCopy     bool
 	tConfig   string
 )
 
@@ -46,6 +50,7 @@ func init() {
 	transcribeCmd.Flags().StringVarP(&tOutput, "output", "o", "", "output file (default: stdout)")
 	transcribeCmd.Flags().StringVarP(&tFormat, "format", "f", "text", "output format (text, json, srt, vtt)")
 	transcribeCmd.Flags().BoolVarP(&tVerbose, "verbose", "v", false, "show progress and timing info")
+	transcribeCmd.Flags().BoolVarP(&tCopy, "copy", "C", false, "copy output to clipboard")
 	transcribeCmd.Flags().StringVar(&tConfig, "config", "", "config file path")
 }
 
@@ -134,11 +139,39 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 	output := result.Format(opts.Format)
 
 	if tOutput != "" {
-		return os.WriteFile(tOutput, []byte(output), 0644)
+		if err := os.WriteFile(tOutput, []byte(output), 0644); err != nil {
+			return err
+		}
+	} else {
+		fmt.Println(output)
 	}
 
-	fmt.Println(output)
+	if tCopy {
+		if err := copyToClipboard(output); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to copy to clipboard: %v\n", err)
+		} else if tVerbose {
+			fmt.Fprintln(os.Stderr, "Copied to clipboard")
+		}
+	}
+
 	return nil
+}
+
+func copyToClipboard(text string) error {
+	var cmd *exec.Cmd
+	switch runtime.GOOS {
+	case "darwin":
+		cmd = exec.Command("pbcopy")
+	default:
+		// Try wl-copy (Wayland) first, fall back to xclip (X11)
+		if _, err := exec.LookPath("wl-copy"); err == nil {
+			cmd = exec.Command("wl-copy")
+		} else {
+			cmd = exec.Command("xclip", "-selection", "clipboard")
+		}
+	}
+	cmd.Stdin = strings.NewReader(text)
+	return cmd.Run()
 }
 
 func bufferStdin() (string, error) {
