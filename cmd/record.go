@@ -60,7 +60,8 @@ func init() {
 }
 
 func ExecuteRecord() {
-	if err := recordCmd.Execute(); err != nil {
+	rootCmd.SetArgs(append([]string{"record"}, os.Args[1:]...))
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }

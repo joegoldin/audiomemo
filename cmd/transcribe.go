@@ -49,7 +49,8 @@ func init() {
 }
 
 func ExecuteTranscribe() {
-	if err := transcribeCmd.Execute(); err != nil {
+	rootCmd.SetArgs(append([]string{"transcribe"}, os.Args[1:]...))
+	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
 }
