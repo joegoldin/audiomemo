@@ -1,3 +1,9 @@
+> **Disclaimer:** This software is provided "as is", without warranty of any
+> kind. It is experimental, untested, non-production-ready code built with the
+> assistance of LLMs (large language models). Use at your own risk. The
+> author(s) accept no liability for any damage, data loss, or other issues
+> arising from its use. See [LICENSE](LICENSE) for details.
+
 # AUDIOTOOLS(1)
 
 ## NAME
