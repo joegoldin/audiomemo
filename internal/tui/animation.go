@@ -19,7 +19,19 @@ var (
 	waveTickHi = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 )
 
-const tickInterval = 8
+// Irregular tick pattern — asymmetric spacing makes scrolling motion visible.
+// The pattern repeats every 13 columns: major at 0, minor at 4 and 9.
+const tickCycle = 13
+
+func isMajorTick(pos int) bool {
+	m := pos % tickCycle
+	return m == 0
+}
+
+func isMinorTick(pos int) bool {
+	m := pos % tickCycle
+	return m == 4 || m == 9
+}
 
 // Animation displays a scrolling waveform of recent audio levels.
 // Each column is a vertical bar growing from bottom to top, colored
@@ -56,7 +68,7 @@ func (a *Animation) SmoothedLevel() float64 {
 
 // Push adds a new level sample to the scrolling history.
 func (a *Animation) Push(level float64) {
-	// Smooth the input (moderate attack, gradual decay)
+	// Heavy smoothing for the dB readout (moderate attack, slow decay).
 	diff := level - a.smoothed
 	if diff > 0 {
 		a.smoothed += diff * 0.5
@@ -65,7 +77,12 @@ func (a *Animation) Push(level float64) {
 	}
 	a.smoothed = math.Max(0, math.Min(1, a.smoothed))
 
-	a.history[a.cursor] = a.smoothed
+	// Light smoothing for the waveform bars — lets natural variation through
+	// so adjacent columns differ, looking more like an actual waveform.
+	prevBar := a.history[(a.cursor-1+a.width)%a.width]
+	bar := prevBar + (level-prevBar)*0.7
+	bar = math.Max(0, math.Min(1, bar))
+	a.history[a.cursor] = bar
 	a.cursor = (a.cursor + 1) % a.width
 	a.totalPushes++
 }
@@ -142,12 +159,12 @@ func (a *Animation) Render(tick int, level float64, paused bool) string {
 			if r == '█' || (r >= '▁' && r <= '▇') {
 				b.WriteString(barStyle.Render(string(r)))
 			} else {
-				// Empty cell: show scrolling tick marks
+				// Empty cell: show scrolling tick marks (irregular spacing).
 				age := a.width - 1 - col
 				absPos := a.totalPushes - age
-				if absPos%tickInterval == 0 {
+				if isMajorTick(absPos) {
 					b.WriteString(waveTickHi.Render("┊"))
-				} else if absPos%(tickInterval/2) == 0 {
+				} else if isMinorTick(absPos) {
 					b.WriteString(waveTick.Render("·"))
 				} else {
 					b.WriteRune(' ')
