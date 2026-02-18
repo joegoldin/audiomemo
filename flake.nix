@@ -21,7 +21,7 @@
             ln -s $out/bin/audiotools $out/bin/rec
             ln -s $out/bin/audiotools $out/bin/transcribe
             wrapProgram $out/bin/audiotools \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg ]}
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg pkgs.whisper-cpp ]}
 
             installShellCompletion --cmd audiotools \
               --bash <($out/bin/audiotools completion bash) \

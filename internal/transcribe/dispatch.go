@@ -2,7 +2,6 @@ package transcribe
 
 import (
 	"fmt"
-	"os/exec"
 
 	"github.com/joegilkes/audiotools/internal/config"
 )
@@ -28,14 +27,9 @@ func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, err
 		return NewMistral(cfg.Transcribe.Mistral.APIKey, cfg.Transcribe.Mistral.Model), nil
 	}
 
-	// Check for local whisper
-	binary := cfg.Transcribe.Whisper.Binary
-	if _, err := exec.LookPath(binary); err == nil {
-		return NewWhisper(binary, cfg.Transcribe.Whisper.Model), nil
-	}
-	// Try whisper-cpp as fallback
-	if _, err := exec.LookPath("whisper-cpp"); err == nil {
-		return NewWhisper("whisper-cpp", cfg.Transcribe.Whisper.Model), nil
+	// Check for local whisper (whisper-cli, whisper, whisperx)
+	if w, found := DetectWhisper(cfg.Transcribe.Whisper.Model); found {
+		return w, nil
 	}
 
 	return nil, fmt.Errorf("no transcription backend available. Set an API key (DEEPGRAM_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY) or install whisper locally")
