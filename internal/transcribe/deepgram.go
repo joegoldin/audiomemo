@@ -31,6 +31,10 @@ func (d *Deepgram) Transcribe(ctx context.Context, audioPath string, opts Transc
 		return nil, fmt.Errorf("deepgram API key not configured (set DEEPGRAM_API_KEY or config)")
 	}
 
+	if err := validateOpts(d.Name(), opts, true, true, true); err != nil {
+		return nil, err
+	}
+
 	f, err := os.Open(audioPath)
 	if err != nil {
 		return nil, fmt.Errorf("failed to open audio file: %w", err)
@@ -62,7 +66,7 @@ func (d *Deepgram) Transcribe(ctx context.Context, audioPath string, opts Transc
 		return nil, fmt.Errorf("deepgram API error (%d): %s", resp.StatusCode, string(body))
 	}
 
-	return d.parseResponse(body)
+	return d.parseResponse(body, opts.Diarize)
 }
 
 func (d *Deepgram) buildQuery(opts TranscribeOpts) url.Values {
@@ -72,9 +76,17 @@ func (d *Deepgram) buildQuery(opts TranscribeOpts) url.Values {
 		model = d.defaultModel
 	}
 	q.Set("model", model)
-	q.Set("smart_format", "true")
-	q.Set("punctuate", "true")
 	q.Set("utterances", "true")
+
+	if opts.SmartFormat {
+		q.Set("smart_format", "true")
+	}
+	if opts.Punctuate {
+		q.Set("punctuate", "true")
+	}
+	if opts.Diarize {
+		q.Set("diarize", "true")
+	}
 
 	if opts.Language != "" {
 		q.Set("language", opts.Language)
@@ -98,11 +110,12 @@ type deepgramResponse struct {
 			Start      float64 `json:"start"`
 			End        float64 `json:"end"`
 			Transcript string  `json:"transcript"`
+			Speaker    int     `json:"speaker"`
 		} `json:"utterances"`
 	} `json:"results"`
 }
 
-func (d *Deepgram) parseResponse(data []byte) (*Result, error) {
+func (d *Deepgram) parseResponse(data []byte, diarize bool) (*Result, error) {
 	var resp deepgramResponse
 	if err := json.Unmarshal(data, &resp); err != nil {
 		return nil, fmt.Errorf("failed to parse deepgram response: %w", err)
@@ -115,11 +128,15 @@ func (d *Deepgram) parseResponse(data []byte) (*Result, error) {
 	}
 
 	for _, u := range resp.Results.Utterances {
-		result.Segments = append(result.Segments, Segment{
+		seg := Segment{
 			Start: u.Start,
 			End:   u.End,
 			Text:  u.Transcript,
-		})
+		}
+		if diarize {
+			seg.Speaker = fmt.Sprintf("Speaker %d", u.Speaker)
+		}
+		result.Segments = append(result.Segments, seg)
 	}
 
 	return result, nil

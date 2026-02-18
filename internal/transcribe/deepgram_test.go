@@ -42,7 +42,7 @@ func TestDeepgramParseResponse(t *testing.T) {
 	}`
 
 	d := NewDeepgram("key", "nova-3")
-	result, err := d.parseResponse([]byte(resp))
+	result, err := d.parseResponse([]byte(resp), false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestDeepgramParseResponse(t *testing.T) {
 
 func TestDeepgramBuildQueryParams(t *testing.T) {
 	d := NewDeepgram("key", "nova-3")
-	params := d.buildQuery(TranscribeOpts{Language: "en", Model: "nova-2"})
+	params := d.buildQuery(TranscribeOpts{Language: "en", Model: "nova-2", SmartFormat: true, Punctuate: true})
 	if params.Get("model") != "nova-2" {
 		t.Errorf("expected nova-2, got %s", params.Get("model"))
 	}
@@ -68,6 +68,9 @@ func TestDeepgramBuildQueryParams(t *testing.T) {
 	}
 	if params.Get("smart_format") != "true" {
 		t.Errorf("expected smart_format true")
+	}
+	if params.Get("punctuate") != "true" {
+		t.Errorf("expected punctuate true")
 	}
 }
 

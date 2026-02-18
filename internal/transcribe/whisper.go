@@ -36,6 +36,7 @@ type Whisper struct {
 	binary       string
 	variant      whisperVariant
 	defaultModel string
+	hfToken      string
 }
 
 // NewWhisper creates a whisper backend with a specific binary.
@@ -106,6 +107,18 @@ func (w *Whisper) Name() string {
 }
 
 func (w *Whisper) Transcribe(ctx context.Context, audioPath string, opts TranscribeOpts) (*Result, error) {
+	// whisperx supports diarize; all other variants do not.
+	// No whisper variant supports smart_format or punctuate.
+	supportsDiarize := w.variant == variantWhisperX
+	if err := validateOpts(w.Name(), opts, supportsDiarize, false, false); err != nil {
+		return nil, err
+	}
+
+	// whisperx diarization requires a HuggingFace token
+	if opts.Diarize && w.variant == variantWhisperX && w.hfToken == "" {
+		return nil, fmt.Errorf("whisperx diarization requires a HuggingFace token (set HF_TOKEN env var or transcribe.whisper.hf_token in config)")
+	}
+
 	if _, err := exec.LookPath(w.binary); err != nil {
 		return nil, fmt.Errorf("whisper binary %q not found on PATH: %w", w.binary, err)
 	}
@@ -350,6 +363,12 @@ func (w *Whisper) buildWhisperXArgs(audioPath, tmpDir, model string, opts Transc
 	}
 	if opts.Language != "" {
 		args = append(args, "--language", opts.Language)
+	}
+	if opts.Diarize {
+		args = append(args, "--diarize")
+		if w.hfToken != "" {
+			args = append(args, "--hf_token", w.hfToken)
+		}
 	}
 	args = append(args, audioPath)
 	return args

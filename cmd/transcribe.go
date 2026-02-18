@@ -17,14 +17,17 @@ import (
 )
 
 var (
-	tBackend  string
-	tModel    string
-	tLanguage string
-	tOutput   string
-	tFormat   string
-	tVerbose  bool
-	tCopy     bool
-	tConfig   string
+	tBackend     string
+	tModel       string
+	tLanguage    string
+	tOutput      string
+	tFormat      string
+	tVerbose     bool
+	tCopy        bool
+	tConfig      string
+	tDiarize     bool
+	tSmartFormat bool
+	tPunctuate   bool
 )
 
 var transcribeCmd = &cobra.Command{
@@ -52,6 +55,9 @@ func init() {
 	transcribeCmd.Flags().BoolVarP(&tVerbose, "verbose", "v", false, "show progress and timing info")
 	transcribeCmd.Flags().BoolVarP(&tCopy, "copy", "C", false, "copy output to clipboard")
 	transcribeCmd.Flags().StringVar(&tConfig, "config", "", "config file path")
+	transcribeCmd.Flags().BoolVar(&tDiarize, "diarize", false, "enable speaker diarization")
+	transcribeCmd.Flags().BoolVar(&tSmartFormat, "smart-format", false, "apply smart formatting (Deepgram)")
+	transcribeCmd.Flags().BoolVar(&tPunctuate, "punctuate", false, "add punctuation (Deepgram)")
 }
 
 func ExecuteTranscribe() {
@@ -94,11 +100,40 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	// Merge config defaults with CLI flags for diarize/smart-format/punctuate.
+	// CLI flags override config defaults. Determine active backend name to read
+	// the correct config section.
+	diarize := tDiarize
+	smartFormat := tSmartFormat
+	punctuate := tPunctuate
+
+	if !cmd.Flags().Changed("diarize") {
+		switch backend.Name() {
+		case "deepgram":
+			diarize = cfg.Transcribe.Deepgram.Diarize
+		case "whisperx":
+			diarize = cfg.Transcribe.Whisper.Diarize
+		}
+	}
+	if !cmd.Flags().Changed("smart-format") {
+		if backend.Name() == "deepgram" {
+			smartFormat = cfg.Transcribe.Deepgram.SmartFormat
+		}
+	}
+	if !cmd.Flags().Changed("punctuate") {
+		if backend.Name() == "deepgram" {
+			punctuate = cfg.Transcribe.Deepgram.Punctuate
+		}
+	}
+
 	opts := transcribe.TranscribeOpts{
-		Model:    tModel,
-		Language: tLanguage,
-		Format:   transcribe.ParseFormat(tFormat),
-		Verbose:  tVerbose,
+		Model:       tModel,
+		Language:    tLanguage,
+		Format:      transcribe.ParseFormat(tFormat),
+		Verbose:     tVerbose,
+		Diarize:     diarize,
+		SmartFormat: smartFormat,
+		Punctuate:   punctuate,
 	}
 
 	if tVerbose {

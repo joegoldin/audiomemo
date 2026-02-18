@@ -30,6 +30,7 @@ func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, err
 
 	// Check for local whisper (whisper-cli, whisper, whisperx)
 	if w, found := DetectWhisper(cfg.Transcribe.Whisper.Model); found {
+		w.hfToken = cfg.Transcribe.Whisper.HFToken
 		return w, nil
 	}
 
@@ -37,10 +38,12 @@ func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, err
 }
 
 func newBackend(cfg *config.Config, name string) (Transcriber, error) {
+	hfToken := cfg.Transcribe.Whisper.HFToken
 	switch name {
 	case "whisper":
 		// Auto-detect best whisper variant
 		if w, found := DetectWhisper(cfg.Transcribe.Whisper.Model); found {
+			w.hfToken = hfToken
 			return w, nil
 		}
 		// Fall back to configured binary or "whisper"
@@ -48,17 +51,23 @@ func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 		if binary == "" {
 			binary = "whisper"
 		}
-		return NewWhisper(binary, cfg.Transcribe.Whisper.Model), nil
+		w := NewWhisper(binary, cfg.Transcribe.Whisper.Model)
+		w.hfToken = hfToken
+		return w, nil
 	case "whisper-cpp":
-		return NewWhisper("whisper-cli", cfg.Transcribe.Whisper.Model), nil
+		w := NewWhisper("whisper-cli", cfg.Transcribe.Whisper.Model)
+		w.hfToken = hfToken
+		return w, nil
 	case "whisperx":
-		return NewWhisper("whisperx", cfg.Transcribe.Whisper.Model), nil
+		w := NewWhisper("whisperx", cfg.Transcribe.Whisper.Model)
+		w.hfToken = hfToken
+		return w, nil
 	case "ffmpeg-whisper":
 		binary := "ffmpeg"
 		if b, err := exec.LookPath("ffmpeg"); err == nil {
 			binary = b
 		}
-		return &Whisper{binary: binary, variant: variantFFmpegWhisper, defaultModel: cfg.Transcribe.Whisper.Model}, nil
+		return &Whisper{binary: binary, variant: variantFFmpegWhisper, defaultModel: cfg.Transcribe.Whisper.Model, hfToken: hfToken}, nil
 	case "deepgram":
 		if cfg.Transcribe.Deepgram.APIKey == "" {
 			return nil, fmt.Errorf("deepgram API key not configured")

@@ -14,9 +14,10 @@ type Result struct {
 }
 
 type Segment struct {
-	Start float64 `json:"start"`
-	End   float64 `json:"end"`
-	Text  string  `json:"text"`
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Text    string  `json:"text"`
+	Speaker string  `json:"speaker,omitempty"`
 }
 
 func (r *Result) Format(f OutputFormat) string {
@@ -28,8 +29,35 @@ func (r *Result) Format(f OutputFormat) string {
 	case FormatVTT:
 		return r.formatVTT()
 	default:
+		return r.formatText()
+	}
+}
+
+func (r *Result) formatText() string {
+	segs := r.segments()
+	// If no segment has a speaker, return plain text
+	hasSpeaker := false
+	for _, seg := range segs {
+		if seg.Speaker != "" {
+			hasSpeaker = true
+			break
+		}
+	}
+	if !hasSpeaker {
 		return r.Text
 	}
+	var b strings.Builder
+	for i, seg := range segs {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		if seg.Speaker != "" {
+			fmt.Fprintf(&b, "%s: %s", seg.Speaker, strings.TrimSpace(seg.Text))
+		} else {
+			b.WriteString(strings.TrimSpace(seg.Text))
+		}
+	}
+	return b.String()
 }
 
 func (r *Result) formatJSON() string {
@@ -49,7 +77,11 @@ func (r *Result) formatSRT() string {
 	for i, seg := range r.segments() {
 		fmt.Fprintf(&b, "%d\n", i+1)
 		fmt.Fprintf(&b, "%s --> %s\n", srtTime(seg.Start), srtTime(seg.End))
-		fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(seg.Text))
+		text := strings.TrimSpace(seg.Text)
+		if seg.Speaker != "" {
+			text = fmt.Sprintf("[%s] %s", seg.Speaker, text)
+		}
+		fmt.Fprintf(&b, "%s\n\n", text)
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }
@@ -59,7 +91,11 @@ func (r *Result) formatVTT() string {
 	b.WriteString("WEBVTT\n\n")
 	for _, seg := range r.segments() {
 		fmt.Fprintf(&b, "%s --> %s\n", vttTime(seg.Start), vttTime(seg.End))
-		fmt.Fprintf(&b, "%s\n\n", strings.TrimSpace(seg.Text))
+		text := strings.TrimSpace(seg.Text)
+		if seg.Speaker != "" {
+			text = fmt.Sprintf("[%s] %s", seg.Speaker, text)
+		}
+		fmt.Fprintf(&b, "%s\n\n", text)
 	}
 	return strings.TrimRight(b.String(), "\n") + "\n"
 }

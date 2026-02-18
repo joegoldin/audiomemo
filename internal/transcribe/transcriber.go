@@ -1,6 +1,9 @@
 package transcribe
 
-import "context"
+import (
+	"context"
+	"fmt"
+)
 
 type OutputFormat string
 
@@ -25,13 +28,31 @@ func ParseFormat(s string) OutputFormat {
 }
 
 type TranscribeOpts struct {
-	Model    string
-	Language string
-	Format   OutputFormat
-	Verbose  bool
+	Model       string
+	Language    string
+	Format      OutputFormat
+	Verbose     bool
+	Diarize     bool
+	SmartFormat bool
+	Punctuate   bool
 }
 
 type Transcriber interface {
 	Transcribe(ctx context.Context, audioPath string, opts TranscribeOpts) (*Result, error)
 	Name() string
+}
+
+// validateOpts checks that the requested transcription options are supported by the backend.
+// Returns an error if an unsupported option is requested.
+func validateOpts(backendName string, opts TranscribeOpts, supportsDiarize, supportsSmartFormat, supportsPunctuate bool) error {
+	if opts.Diarize && !supportsDiarize {
+		return fmt.Errorf("%s does not support --diarize", backendName)
+	}
+	if opts.SmartFormat && !supportsSmartFormat {
+		return fmt.Errorf("%s does not support --smart-format", backendName)
+	}
+	if opts.Punctuate && !supportsPunctuate {
+		return fmt.Errorf("%s does not support --punctuate", backendName)
+	}
+	return nil
 }

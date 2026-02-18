@@ -2,6 +2,7 @@ package config
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -11,8 +12,10 @@ import (
 )
 
 type Config struct {
-	Record     RecordConfig     `toml:"record"`
-	Transcribe TranscribeConfig `toml:"transcribe"`
+	Record       RecordConfig        `toml:"record"`
+	Devices      map[string]string   `toml:"devices"`
+	DeviceGroups map[string][]string `toml:"device_groups"`
+	Transcribe   TranscribeConfig    `toml:"transcribe"`
 }
 
 type RecordConfig struct {
@@ -34,13 +37,18 @@ type TranscribeConfig struct {
 }
 
 type WhisperConfig struct {
-	Model  string `toml:"model"`
-	Binary string `toml:"binary"`
+	Model   string `toml:"model"`
+	Binary  string `toml:"binary"`
+	HFToken string `toml:"hf_token"`
+	Diarize bool   `toml:"diarize"`
 }
 
 type DeepgramConfig struct {
-	APIKey string `toml:"api_key"`
-	Model  string `toml:"model"`
+	APIKey      string `toml:"api_key"`
+	Model       string `toml:"model"`
+	Diarize     bool   `toml:"diarize"`
+	SmartFormat bool   `toml:"smart_format"`
+	Punctuate   bool   `toml:"punctuate"`
 }
 
 type OpenAIConfig struct {
@@ -61,6 +69,8 @@ func Default() *Config {
 			Channels:   1,
 			OutputDir:  "~/Recordings",
 		},
+		Devices:      map[string]string{},
+		DeviceGroups: map[string][]string{},
 		Transcribe: TranscribeConfig{
 			OutputFormat: "text",
 			Whisper:      WhisperConfig{Model: "base", Binary: "whisper"},
@@ -108,6 +118,9 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("MISTRAL_API_KEY"); v != "" {
 		c.Transcribe.Mistral.APIKey = v
 	}
+	if v := os.Getenv("HF_TOKEN"); v != "" && c.Transcribe.Whisper.HFToken == "" {
+		c.Transcribe.Whisper.HFToken = v
+	}
 }
 
 func (c *Config) ResolveOutputDir() string {
@@ -119,4 +132,75 @@ func (c *Config) ResolveOutputDir() string {
 		}
 	}
 	return dir
+}
+
+// defaultConfigPath returns the default XDG config path for the config file.
+func defaultConfigPath() (string, error) {
+	configDir := os.Getenv("XDG_CONFIG_HOME")
+	if configDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("cannot determine config path: %w", err)
+		}
+		configDir = filepath.Join(home, ".config")
+	}
+	return filepath.Join(configDir, "audiotools", "config.toml"), nil
+}
+
+// Save writes the config to the default XDG config path.
+func (c *Config) Save() error {
+	path, err := defaultConfigPath()
+	if err != nil {
+		return err
+	}
+	return c.SaveTo(path)
+}
+
+// SaveTo writes the config to the specified path, creating parent directories
+// as needed.
+func (c *Config) SaveTo(path string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+		return fmt.Errorf("creating config directory: %w", err)
+	}
+	data, err := toml.Marshal(c)
+	if err != nil {
+		return fmt.Errorf("encoding config: %w", err)
+	}
+	if err := os.WriteFile(path, data, 0644); err != nil {
+		return fmt.Errorf("writing config: %w", err)
+	}
+	return nil
+}
+
+// ResolveDevice resolves a device name through groups and aliases.
+// Resolution order:
+//  1. Empty name returns ["default"]
+//  2. Check DeviceGroups: resolve each alias in the group via Devices map
+//  3. Check Devices: return the raw device name
+//  4. Otherwise treat as raw device name and return as-is
+func (c *Config) ResolveDevice(name string) ([]string, error) {
+	if name == "" {
+		return []string{"default"}, nil
+	}
+
+	// Check device groups first.
+	if aliases, ok := c.DeviceGroups[name]; ok {
+		devices := make([]string, 0, len(aliases))
+		for _, alias := range aliases {
+			raw, ok := c.Devices[alias]
+			if !ok {
+				return nil, fmt.Errorf("device group %q references unknown alias %q", name, alias)
+			}
+			devices = append(devices, raw)
+		}
+		return devices, nil
+	}
+
+	// Check device aliases.
+	if raw, ok := c.Devices[name]; ok {
+		return []string{raw}, nil
+	}
+
+	// Treat as raw device name.
+	return []string{name}, nil
 }
