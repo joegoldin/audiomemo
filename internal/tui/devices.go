@@ -26,13 +26,17 @@ import (
 type DeviceManagerState int
 
 const (
-	DMBrowse        DeviceManagerState = iota
-	DMAliasPrompt                      // typing an alias name
-	DMGroupName                        // typing a group name
-	DMGroupSelect                      // multi-selecting aliases for a group
-	DMConfirmDelete                    // confirming deletion
-	DMTestRecording                    // recording a 3-second test clip
-	DMTestPlayback                     // playing back the test clip
+	DMBrowse         DeviceManagerState = iota
+	DMAliasPrompt                       // typing an alias name
+	DMAliasEdit                         // editing an alias (renaming the target device)
+	DMAliasBrowse                       // browsing aliases for edit/delete
+	DMGroupName                         // typing a group name
+	DMGroupSelect                       // multi-selecting aliases for a group
+	DMGroupBrowse                       // browsing groups for edit/delete
+	DMConfirmDeleteA                    // confirming alias deletion from alias browse
+	DMConfirmDeleteG                    // confirming group deletion
+	DMTestRecording                     // recording a 3-second test clip
+	DMTestPlayback                      // playing back the test clip
 )
 
 // ---------------------------------------------------------------------------
@@ -124,11 +128,14 @@ type DeviceManager struct {
 	devices     []record.Device
 	config      *config.Config
 	configPath  string
-	cursor      int         // cursor position in device list
-	aliasInput  simpleInput // for alias name input
+	cursor           int         // cursor position in device list
+	aliasInput       simpleInput // for alias name input
+	aliasEditInput   simpleInput // for editing alias target device
+	aliasBrowseCursor int       // cursor position when browsing aliases
 	groupInput  simpleInput // for group name input
-	groupSelect []bool      // multi-select for group aliases (indexed by sorted alias keys)
-	groupCursor int         // cursor position in the group multi-select
+	groupSelect      []bool  // multi-select for group aliases (indexed by sorted alias keys)
+	groupCursor      int    // cursor position in the group multi-select
+	groupBrowseCursor int   // cursor position when browsing groups
 	message     string      // status / error message
 	vuLevel     float64     // live VU preview level (dB)
 	vuSmoothed  float64     // smoothed VU level (0..1)
@@ -156,8 +163,9 @@ func NewDeviceManager(cfg *config.Config, configPath string) *DeviceManager {
 		state:      DMBrowse,
 		config:     cfg,
 		configPath: configPath,
-		aliasInput: newSimpleInput("alias name"),
-		groupInput: newSimpleInput("group name"),
+		aliasInput:     newSimpleInput("alias name"),
+		aliasEditInput: newSimpleInput("device name"),
+		groupInput:     newSimpleInput("group name"),
 	}
 }
 
@@ -280,8 +288,16 @@ func (dm *DeviceManager) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return dm.handleGroupNameKey(msg)
 	case DMGroupSelect:
 		return dm.handleGroupSelectKey(msg)
-	case DMConfirmDelete:
-		return dm.handleConfirmDeleteKey(msg)
+	case DMAliasBrowse:
+		return dm.handleAliasBrowseKey(msg)
+	case DMAliasEdit:
+		return dm.handleAliasEditKey(msg)
+	case DMGroupBrowse:
+		return dm.handleGroupBrowseKey(msg)
+	case DMConfirmDeleteA:
+		return dm.handleConfirmDeleteAliasKey(msg)
+	case DMConfirmDeleteG:
+		return dm.handleConfirmDeleteGroupKey(msg)
 	case DMTestRecording, DMTestPlayback:
 		// Allow ctrl+c to abort test
 		if msg.String() == "ctrl+c" {
@@ -324,6 +340,23 @@ func (dm *DeviceManager) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			dm.message = "No devices loaded."
 			return dm, nil
 		}
+		dev := dm.devices[dm.cursor]
+		existingAlias := dm.aliasForDevice(dev.Name)
+		if existingAlias != "" {
+			// Device already has an alias — open alias browser with it selected for editing
+			aliases := dm.sortedAliases()
+			dm.aliasBrowseCursor = 0
+			for i, a := range aliases {
+				if a == existingAlias {
+					dm.aliasBrowseCursor = i
+					break
+				}
+			}
+			dm.aliasEditInput.SetValue(dm.config.Devices[existingAlias])
+			dm.state = DMAliasEdit
+			dm.message = fmt.Sprintf("Editing alias '%s'", existingAlias)
+			return dm, nil
+		}
 		dm.state = DMAliasPrompt
 		dm.aliasInput.SetValue("")
 		dm.message = ""
@@ -332,6 +365,28 @@ func (dm *DeviceManager) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "g":
 		dm.state = DMGroupName
 		dm.groupInput.SetValue("")
+		dm.message = ""
+		return dm, nil
+
+	case "A":
+		aliases := dm.sortedAliases()
+		if len(aliases) == 0 {
+			dm.message = "No aliases defined yet."
+			return dm, nil
+		}
+		dm.state = DMAliasBrowse
+		dm.aliasBrowseCursor = 0
+		dm.message = ""
+		return dm, nil
+
+	case "G":
+		groups := dm.sortedGroupNames()
+		if len(groups) == 0 {
+			dm.message = "No groups defined yet."
+			return dm, nil
+		}
+		dm.state = DMGroupBrowse
+		dm.groupBrowseCursor = 0
 		dm.message = ""
 		return dm, nil
 
@@ -363,19 +418,6 @@ func (dm *DeviceManager) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		dm.message = "Recording 3-second test..."
 		return dm, dm.recordTestClip()
 
-	case "x":
-		if len(dm.devices) == 0 {
-			dm.message = "No devices loaded."
-			return dm, nil
-		}
-		dev := dm.devices[dm.cursor]
-		alias := dm.aliasForDevice(dev.Name)
-		if alias == "" {
-			dm.message = "Selected device has no alias to delete."
-			return dm, nil
-		}
-		dm.state = DMConfirmDelete
-		dm.message = fmt.Sprintf("Delete alias '%s'? [y/n]", alias)
 	}
 	return dm, nil
 }
@@ -514,18 +556,82 @@ func (dm *DeviceManager) handleGroupSelectKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 	return dm, nil
 }
 
-func (dm *DeviceManager) handleConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+
+func (dm *DeviceManager) handleAliasBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	aliases := dm.sortedAliases()
+	switch msg.String() {
+	case "esc", "q":
+		dm.state = DMBrowse
+		dm.message = ""
+		return dm, nil
+	case "up", "k":
+		if dm.aliasBrowseCursor > 0 {
+			dm.aliasBrowseCursor--
+		}
+	case "down", "j":
+		if dm.aliasBrowseCursor < len(aliases)-1 {
+			dm.aliasBrowseCursor++
+		}
+	case "e", "enter":
+		if dm.aliasBrowseCursor < len(aliases) {
+			name := aliases[dm.aliasBrowseCursor]
+			dm.aliasEditInput.SetValue(dm.config.Devices[name])
+			dm.state = DMAliasEdit
+			dm.message = fmt.Sprintf("Editing alias '%s'", name)
+		}
+	case "x", "d":
+		if dm.aliasBrowseCursor < len(aliases) {
+			name := aliases[dm.aliasBrowseCursor]
+			dm.state = DMConfirmDeleteA
+			dm.message = fmt.Sprintf("Delete alias '%s'? [y/n]", name)
+		}
+	}
+	return dm, nil
+}
+
+func (dm *DeviceManager) handleAliasEditKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	keyStr := msg.String()
+	switch keyStr {
+	case "esc":
+		dm.state = DMAliasBrowse
+		dm.message = ""
+		return dm, nil
+	case "enter":
+		newDevice := strings.TrimSpace(dm.aliasEditInput.Value())
+		if newDevice == "" {
+			dm.message = "Device name cannot be empty."
+			return dm, nil
+		}
+		aliases := dm.sortedAliases()
+		if dm.aliasBrowseCursor < len(aliases) {
+			name := aliases[dm.aliasBrowseCursor]
+			dm.config.Devices[name] = newDevice
+			if err := dm.saveConfig(); err != nil {
+				dm.message = fmt.Sprintf("Save error: %v", err)
+			} else {
+				dm.message = fmt.Sprintf("Updated alias '%s' -> %s", name, newDevice)
+			}
+		}
+		dm.state = DMAliasBrowse
+		return dm, nil
+	default:
+		dm.aliasEditInput.HandleKey(keyStr)
+	}
+	return dm, nil
+}
+
+func (dm *DeviceManager) handleConfirmDeleteAliasKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "y", "Y":
-		dev := dm.devices[dm.cursor]
-		alias := dm.aliasForDevice(dev.Name)
-		if alias != "" {
-			delete(dm.config.Devices, alias)
-			// Remove alias from all groups
+		aliases := dm.sortedAliases()
+		if dm.aliasBrowseCursor < len(aliases) {
+			name := aliases[dm.aliasBrowseCursor]
+			delete(dm.config.Devices, name)
+			// Remove from all groups
 			for gName, members := range dm.config.DeviceGroups {
 				filtered := members[:0]
 				for _, m := range members {
-					if m != alias {
+					if m != name {
 						filtered = append(filtered, m)
 					}
 				}
@@ -535,19 +641,109 @@ func (dm *DeviceManager) handleConfirmDeleteKey(msg tea.KeyMsg) (tea.Model, tea.
 					dm.config.DeviceGroups[gName] = filtered
 				}
 			}
-			// Clear default if it was this alias
-			if dm.config.Record.Device == alias {
+			if dm.config.Record.Device == name {
 				dm.config.Record.Device = ""
 			}
 			if err := dm.saveConfig(); err != nil {
 				dm.message = fmt.Sprintf("Save error: %v", err)
 			} else {
-				dm.message = fmt.Sprintf("Deleted alias '%s'.", alias)
+				dm.message = fmt.Sprintf("Deleted alias '%s'.", name)
+			}
+			remaining := dm.sortedAliases()
+			if dm.aliasBrowseCursor >= len(remaining) && dm.aliasBrowseCursor > 0 {
+				dm.aliasBrowseCursor--
+			}
+			if len(remaining) == 0 {
+				dm.state = DMBrowse
+				return dm, nil
 			}
 		}
-		dm.state = DMBrowse
+		dm.state = DMAliasBrowse
 	case "n", "N", "esc":
+		dm.state = DMAliasBrowse
+		dm.message = ""
+	}
+	return dm, nil
+}
+
+func (dm *DeviceManager) handleGroupBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	groups := dm.sortedGroupNames()
+	switch msg.String() {
+	case "esc", "q":
 		dm.state = DMBrowse
+		dm.message = ""
+		return dm, nil
+	case "up", "k":
+		if dm.groupBrowseCursor > 0 {
+			dm.groupBrowseCursor--
+		}
+	case "down", "j":
+		if dm.groupBrowseCursor < len(groups)-1 {
+			dm.groupBrowseCursor++
+		}
+	case "e", "enter":
+		if dm.groupBrowseCursor < len(groups) {
+			name := groups[dm.groupBrowseCursor]
+			dm.groupInput.SetValue(name)
+			aliases := dm.sortedAliases()
+			if len(aliases) == 0 {
+				dm.message = "No aliases defined yet. Create aliases first."
+				dm.state = DMBrowse
+				return dm, nil
+			}
+			dm.groupSelect = make([]bool, len(aliases))
+			dm.groupCursor = 0
+			if existing, ok := dm.config.DeviceGroups[name]; ok {
+				memberSet := map[string]bool{}
+				for _, a := range existing {
+					memberSet[a] = true
+				}
+				for i, a := range aliases {
+					dm.groupSelect[i] = memberSet[a]
+				}
+			}
+			dm.state = DMGroupSelect
+			dm.message = fmt.Sprintf("Editing group '%s': space to toggle, enter to save", name)
+		}
+	case "x", "d":
+		if dm.groupBrowseCursor < len(groups) {
+			name := groups[dm.groupBrowseCursor]
+			dm.state = DMConfirmDeleteG
+			dm.message = fmt.Sprintf("Delete group '%s'? [y/n]", name)
+		}
+	}
+	return dm, nil
+}
+
+func (dm *DeviceManager) handleConfirmDeleteGroupKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "y", "Y":
+		groups := dm.sortedGroupNames()
+		if dm.groupBrowseCursor < len(groups) {
+			name := groups[dm.groupBrowseCursor]
+			delete(dm.config.DeviceGroups, name)
+			// Clear default if it referenced this group
+			if dm.config.Record.Device == name {
+				dm.config.Record.Device = ""
+			}
+			if err := dm.saveConfig(); err != nil {
+				dm.message = fmt.Sprintf("Save error: %v", err)
+			} else {
+				dm.message = fmt.Sprintf("Deleted group '%s'.", name)
+			}
+			// Adjust cursor if it's past the end
+			remaining := dm.sortedGroupNames()
+			if dm.groupBrowseCursor >= len(remaining) && dm.groupBrowseCursor > 0 {
+				dm.groupBrowseCursor--
+			}
+			if len(remaining) == 0 {
+				dm.state = DMBrowse
+				return dm, nil
+			}
+		}
+		dm.state = DMGroupBrowse
+	case "n", "N", "esc":
+		dm.state = DMGroupBrowse
 		dm.message = ""
 	}
 	return dm, nil
@@ -718,10 +914,14 @@ func (dm *DeviceManager) View() string {
 	switch dm.state {
 	case DMAliasPrompt:
 		return dm.viewAliasPrompt()
+	case DMAliasBrowse, DMAliasEdit, DMConfirmDeleteA:
+		return dm.viewAliasBrowse()
 	case DMGroupName:
 		return dm.viewGroupNamePrompt()
 	case DMGroupSelect:
 		return dm.viewGroupSelect()
+	case DMGroupBrowse, DMConfirmDeleteG:
+		return dm.viewGroupBrowse()
 	}
 
 	// Main layout: left panel (devices) + right panel (config)
@@ -876,9 +1076,31 @@ func (dm *DeviceManager) viewVUBar(width int) string {
 	if width < 10 {
 		width = 40
 	}
-	barWidth := width - 30
-	if barWidth < 10 {
-		barWidth = 10
+
+	dbStr := formatDB(dm.vuSmoothed)
+	// dbStr is like "-24.0 dB" (~8 chars), plus spacing/label overhead
+	labelWidth := len(dbStr) + 2 // " " + dbStr
+
+	devName := ""
+	if dm.cursor < len(dm.devices) {
+		d := dm.devices[dm.cursor]
+		devName = d.Description
+		if devName == "" {
+			devName = d.Name
+		}
+	}
+
+	// Reserve space for bar + label + device name, all on one line
+	barWidth := width - labelWidth
+	if devName != "" {
+		maxDevName := width / 3
+		if len(devName) > maxDevName {
+			devName = devName[:maxDevName-3] + "..."
+		}
+		barWidth = width - labelWidth - len(devName) - 2
+	}
+	if barWidth < 5 {
+		barWidth = 5
 	}
 
 	filled := int(dm.vuSmoothed * float64(barWidth))
@@ -890,33 +1112,20 @@ func (dm *DeviceManager) viewVUBar(width int) string {
 	bar := dmVUFilled.Render(strings.Repeat("\u2588", filled)) +
 		dmVUEmpty.Render(strings.Repeat("\u2591", empty))
 
-	dbStr := formatDB(dm.vuSmoothed)
-
-	devName := ""
-	if dm.cursor < len(dm.devices) {
-		d := dm.devices[dm.cursor]
-		devName = d.Description
-		if devName == "" {
-			devName = d.Name
-		}
-		if len(devName) > 30 {
-			devName = devName[:27] + "..."
-		}
+	if devName != "" {
+		return fmt.Sprintf("%s %s  %s", bar, dmDimStyle.Render(dbStr), dmDimStyle.Render(devName))
 	}
-
-	return fmt.Sprintf("%s %s  %s", bar, dmDimStyle.Render(dbStr), dmDimStyle.Render(devName))
+	return fmt.Sprintf("%s %s", bar, dmDimStyle.Render(dbStr))
 }
 
 func (dm *DeviceManager) viewKeys() string {
 	switch dm.state {
-	case DMConfirmDelete:
-		return dmDimStyle.Render("[y]es  [n]o")
 	case DMTestRecording:
 		return dmDimStyle.Render("Recording test... [ctrl+c] cancel")
 	case DMTestPlayback:
 		return dmDimStyle.Render("Playing back... [ctrl+c] cancel")
 	default:
-		return dmDimStyle.Render("[a]lias  [g]roup  [d]efault  [t]est  [x]delete  [q]uit")
+		return dmDimStyle.Render("[a]lias  [A]liases  [g]roup  [G]roups  [d]efault  [t]est  [q]uit")
 	}
 }
 
@@ -966,6 +1175,67 @@ func (dm *DeviceManager) viewGroupSelect() string {
 		b.WriteString("  " + dmAccentStyle.Render(dm.message) + "\n\n")
 	}
 	b.WriteString(dmDimStyle.Render("  [space] toggle  [enter] save  [esc] cancel"))
+	return b.String()
+}
+
+func (dm *DeviceManager) viewAliasBrowse() string {
+	var b strings.Builder
+	b.WriteString(dmTitleStyle.Render("Aliases") + "\n\n")
+	aliases := dm.sortedAliases()
+	for i, name := range aliases {
+		cursor := "  "
+		if i == dm.aliasBrowseCursor {
+			cursor = dmSelectedStyle.Render("> ")
+		}
+		raw := dm.config.Devices[name]
+		b.WriteString(fmt.Sprintf("%s%s -> %s\n", cursor, dmAliasTag.Render(name), dmDimStyle.Render(raw)))
+	}
+	b.WriteString("\n")
+	if dm.state == DMAliasEdit {
+		aliases := dm.sortedAliases()
+		if dm.aliasBrowseCursor < len(aliases) {
+			b.WriteString(fmt.Sprintf("  Device: %s\n\n", dm.aliasEditInput.View()))
+		}
+	}
+	if dm.message != "" {
+		if strings.HasPrefix(dm.message, "Delete") || strings.HasPrefix(dm.message, "Error") || strings.HasPrefix(dm.message, "Save error") {
+			b.WriteString("  " + dmErrorStyle.Render(dm.message) + "\n\n")
+		} else {
+			b.WriteString("  " + dmAccentStyle.Render(dm.message) + "\n\n")
+		}
+	}
+	switch dm.state {
+	case DMAliasEdit:
+		b.WriteString(dmDimStyle.Render("  [enter] save  [esc] cancel"))
+	case DMConfirmDeleteA:
+		b.WriteString(dmDimStyle.Render("  [y]es  [n]o"))
+	default:
+		b.WriteString(dmDimStyle.Render("  [e]dit  [x]delete  [esc] back"))
+	}
+	return b.String()
+}
+
+func (dm *DeviceManager) viewGroupBrowse() string {
+	var b strings.Builder
+	b.WriteString(dmTitleStyle.Render("Groups") + "\n\n")
+	groups := dm.sortedGroupNames()
+	for i, name := range groups {
+		cursor := "  "
+		if i == dm.groupBrowseCursor {
+			cursor = dmSelectedStyle.Render("> ")
+		}
+		members := dm.config.DeviceGroups[name]
+		b.WriteString(fmt.Sprintf("%s%s -> %s\n", cursor, dmAccentStyle.Render(name), dmDimStyle.Render(strings.Join(members, ", "))))
+	}
+	b.WriteString("\n")
+	if dm.message != "" {
+		if strings.HasPrefix(dm.message, "Delete") || strings.HasPrefix(dm.message, "Error") {
+			b.WriteString("  " + dmErrorStyle.Render(dm.message) + "\n\n")
+		} else {
+			b.WriteString("  " + dmAccentStyle.Render(dm.message) + "\n\n")
+		}
+	}
+	b.WriteString(dmDimStyle.Render("  [e]dit  [x]delete  [esc] back"))
 	return b.String()
 }
 
