@@ -14,7 +14,7 @@
           pname = "audiotools";
           version = "0.1.0";
           src = ./.;
-          vendorHash = null;
+          vendorHash = "sha256-IFJmM1jacTeNk9qo1An/FGi/BdjesasSNAXTdj/LBIM=";
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postInstall = ''
             ln -s $out/bin/audiotools $out/bin/record
