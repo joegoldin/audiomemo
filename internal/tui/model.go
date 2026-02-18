@@ -28,7 +28,6 @@ type Model struct {
 	pauseTotal time.Duration
 	level      float64
 	tick       int
-	vu         *VUMeter
 	anim       *Animation
 	picker     *DevicePicker
 	showPicker bool
@@ -53,8 +52,7 @@ func NewModel(rec *record.Recorder, opts record.RecordOpts) *Model {
 		recorder:  rec,
 		opts:      opts,
 		startTime: time.Now(),
-		vu:        NewVUMeter(50),
-		anim:      NewAnimation(50, 7),
+		anim:      NewAnimation(60, 9),
 		picker:    NewDevicePicker(),
 	}
 }
@@ -193,16 +191,14 @@ func (m *Model) View() string {
 	info := fmt.Sprintf("%dkHz %s", m.opts.SampleRate/1000, channelStr(m.opts.Channels))
 	header := fmt.Sprintf("  %s  %s       %s", status, dur, dimStyle.Render(info))
 
-	// Animation
+	// Waveform (unified VU + scrolling history)
 	paused := m.state != StateRecording
 	animLevel := dbToLevel(m.level)
 	animView := m.anim.Render(m.tick, animLevel, paused)
 
-	// VU
-	vuView := m.vu.Render(m.level)
-
-	// Stack animation and VU vertically
-	center := lipgloss.JoinVertical(lipgloss.Left, animView, "  "+vuView)
+	// dB readout to the right of the waveform, vertically centered
+	dbStr := vuDBText.Render(" " + formatDB(m.anim.SmoothedLevel()))
+	center := lipgloss.JoinHorizontal(lipgloss.Center, animView, dbStr)
 
 	// Info
 	micLine := infoStyle.Render(fmt.Sprintf("  mic: %s", m.opts.Device))

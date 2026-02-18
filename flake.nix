@@ -10,11 +10,16 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        vendorHash = "sha256-IFJmM1jacTeNk9qo1An/FGi/BdjesasSNAXTdj/LBIM=";
+        whisperModel = pkgs.fetchurl {
+          url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
+          hash = "sha256-YO1bw90U7qhWST0zQ0m0BXgt3K8AKNS130CINF+6Lv4=";
+        };
         audiotools = pkgs.buildGoModule {
           pname = "audiotools";
           version = "0.1.0";
           src = ./.;
-          vendorHash = "sha256-IFJmM1jacTeNk9qo1An/FGi/BdjesasSNAXTdj/LBIM=";
+          inherit vendorHash;
           nativeBuildInputs = [ pkgs.makeWrapper pkgs.installShellFiles ];
           postInstall = ''
             ln -s $out/bin/audiotools $out/bin/record
@@ -34,27 +39,17 @@
         packages.default = audiotools;
         packages.audiotools = audiotools;
 
-        checks.default = pkgs.stdenv.mkDerivation {
-          name = "audiotools-tests";
+        checks.default = pkgs.buildGoModule {
+          pname = "audiotools-tests";
+          version = "0.1.0";
           src = ./.;
-          nativeBuildInputs = [ pkgs.go pkgs.ffmpeg pkgs.whisper-cpp ];
-          # Pre-populate go module cache from the vendor dir
-          GO111MODULE = "on";
-          GOFLAGS = "-mod=vendor";
-          # whisper-cpp model for integration tests
-          HOME = "/tmp/audiotools-test-home";
-          buildPhase = ''
-            export GOCACHE=$TMPDIR/go-cache
-            export GOPATH=$TMPDIR/go
-
-            # Set up whisper-cpp model for integration tests
-            mkdir -p /tmp/audiotools-test-home/.local/share/whisper-cpp
-            cp ${pkgs.fetchurl {
-              url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
-              hash = "sha256-YO1bw90U7qhWST0zQ0m0BXgt3K8AKNS130CINF+6Lv4=";
-            }} /tmp/audiotools-test-home/.local/share/whisper-cpp/ggml-base.bin
-
-            go test -v -count=1 -timeout 300s ./...
+          inherit vendorHash;
+          nativeBuildInputs = [ pkgs.ffmpeg pkgs.whisper-cpp ];
+          doCheck = true;
+          preCheck = ''
+            export HOME=/tmp/audiotools-test-home
+            mkdir -p $HOME/.local/share/whisper-cpp
+            cp ${whisperModel} $HOME/.local/share/whisper-cpp/ggml-base.bin
           '';
           installPhase = ''
             touch $out

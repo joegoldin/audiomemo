@@ -1,4 +1,5 @@
 /audiotools
 /dist/
+/vendor/
 *.test
 result

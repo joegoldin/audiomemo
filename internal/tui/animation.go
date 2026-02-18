@@ -7,23 +7,25 @@ import (
 	"github.com/charmbracelet/lipgloss"
 )
 
-// Block height characters for smooth vertical resolution per column
+// Fractional block characters for smooth vertical sub-cell resolution.
+// Index 0 = empty, 8 = full block. These grow from the bottom of the cell.
 var heightBlocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
 
 var (
-	waveDim    = lipgloss.NewStyle().Foreground(lipgloss.Color("#1e1b4b"))
-	waveLow    = lipgloss.NewStyle().Foreground(lipgloss.Color("#4c1d95"))
-	waveMid    = lipgloss.NewStyle().Foreground(lipgloss.Color("#7c3aed"))
-	waveHigh   = lipgloss.NewStyle().Foreground(lipgloss.Color("#a78bfa"))
-	wavePeak   = lipgloss.NewStyle().Foreground(lipgloss.Color("#c4b5fd"))
-	waveSilent = lipgloss.NewStyle().Foreground(lipgloss.Color("#2e1065"))
+	waveGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
+	waveYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308"))
+	waveRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+	waveTick   = lipgloss.NewStyle().Foreground(lipgloss.Color("#333333"))
+	waveTickHi = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 )
 
-const flatLine = '─'
+const tickInterval = 8
 
 // Animation displays a scrolling waveform of recent audio levels.
-// Each column represents one level sample, rendered as a mirrored
-// bar growing up and down from the center line.
+// Each column is a vertical bar growing from bottom to top, colored
+// green (low) to yellow (mid) to red (peak). The rightmost column is
+// the live VU; older columns scroll left as history. Tick marks scroll
+// through to show movement even during silence.
 type Animation struct {
 	width  int
 	height int
@@ -33,8 +35,10 @@ type Animation struct {
 	// Smoothed level for current frame
 	smoothed float64
 	// Track last pushed level to avoid filling with stale repeats
-	lastLevel float64
+	lastLevel  float64
 	staleCount int
+	// Total pushes for scrolling tick marks
+	totalPushes int
 }
 
 func NewAnimation(width, height int) *Animation {
@@ -43,6 +47,11 @@ func NewAnimation(width, height int) *Animation {
 		height:  height,
 		history: make([]float64, width),
 	}
+}
+
+// SmoothedLevel returns the current smoothed level (0..1) for dB display.
+func (a *Animation) SmoothedLevel() float64 {
+	return a.smoothed
 }
 
 // Push adds a new level sample to the scrolling history.
@@ -58,29 +67,24 @@ func (a *Animation) Push(level float64) {
 
 	a.history[a.cursor] = a.smoothed
 	a.cursor = (a.cursor + 1) % a.width
+	a.totalPushes++
 }
 
 func (a *Animation) Render(tick int, level float64, paused bool) string {
 	if !paused {
-		// Only push a new column when the level actually changed,
-		// so repeated ticks with stale data don't flood the buffer.
 		if level != a.lastLevel {
 			a.lastLevel = level
 			a.staleCount = 0
 			a.Push(level)
 		} else {
 			a.staleCount++
-			// Still push occasionally so the waveform scrolls during
-			// sustained tones, but decay toward silence smoothly.
 			if a.staleCount%3 == 0 {
 				a.Push(level)
 			}
 		}
 	}
 
-	centerY := a.height / 2
-
-	// Build grid
+	// Build grid. Row 0 = top (peak/red), row height-1 = bottom (green).
 	grid := make([][]rune, a.height)
 	for y := range grid {
 		grid[y] = make([]rune, a.width)
@@ -89,62 +93,68 @@ func (a *Animation) Render(tick int, level float64, paused bool) string {
 		}
 	}
 
-	// Draw each column from the history buffer (oldest to newest)
+	// Draw each column as a bottom-to-top bar.
 	for col := 0; col < a.width; col++ {
 		idx := (a.cursor + col) % a.width
 		h := a.history[idx]
 
-		if h < 0.02 {
-			// Flat center line when silent
-			grid[centerY][col] = flatLine
-		} else {
-			// Mirrored bars from center
-			extent := int(math.Round(h * float64(centerY)))
-			if extent < 1 {
-				extent = 1
-			}
-			for dy := 0; dy <= extent && centerY-dy >= 0 && centerY+dy < a.height; dy++ {
-				if dy == 0 {
-					grid[centerY][col] = '█'
-				} else {
-					grid[centerY-dy][col] = '█'
-					grid[centerY+dy][col] = '█'
-				}
-			}
+		if h < 0.005 {
+			continue // empty column, ticks drawn later
+		}
+
+		// Continuous fill height in cell units (bottom-up)
+		fillFloat := h * float64(a.height)
+		fullCells := int(fillFloat)
+		frac := fillFloat - float64(fullCells)
+		fracIdx := int(frac * 8)
+
+		// Fill from bottom up
+		for i := 0; i < fullCells && i < a.height; i++ {
+			y := a.height - 1 - i
+			grid[y][col] = '█'
+		}
+
+		// Fractional top edge
+		if fracIdx > 0 && fullCells < a.height {
+			y := a.height - 1 - fullCells
+			grid[y][col] = heightBlocks[fracIdx]
 		}
 	}
 
-	// Render with color based on row distance from center
+	// Render each row with color based on vertical position.
+	// Bottom = green, mid = yellow, top = red.
 	var lines []string
 	for y, row := range grid {
-		dist := math.Abs(float64(y-centerY)) / math.Max(1, float64(centerY))
-		var style lipgloss.Style
+		// heightFrac: 0.0 at bottom, 1.0 at top
+		heightFrac := float64(a.height-1-y) / math.Max(1, float64(a.height-1))
+		var barStyle lipgloss.Style
 		switch {
-		case dist > 0.8:
-			style = wavePeak
-		case dist > 0.55:
-			style = waveHigh
-		case dist > 0.3:
-			style = waveMid
-		case dist > 0.05:
-			style = waveLow
+		case heightFrac >= 0.85:
+			barStyle = waveRed
+		case heightFrac >= 0.6:
+			barStyle = waveYellow
 		default:
-			style = waveDim
+			barStyle = waveGreen
 		}
 
-		// Use dim style for flat-line-only rows
-		hasBar := false
-		for _, r := range row {
-			if r == '█' {
-				hasBar = true
-				break
+		var b strings.Builder
+		for col, r := range row {
+			if r == '█' || (r >= '▁' && r <= '▇') {
+				b.WriteString(barStyle.Render(string(r)))
+			} else {
+				// Empty cell: show scrolling tick marks
+				age := a.width - 1 - col
+				absPos := a.totalPushes - age
+				if absPos%tickInterval == 0 {
+					b.WriteString(waveTickHi.Render("┊"))
+				} else if absPos%(tickInterval/2) == 0 {
+					b.WriteString(waveTick.Render("·"))
+				} else {
+					b.WriteRune(' ')
+				}
 			}
 		}
-		if !hasBar {
-			style = waveSilent
-		}
-
-		lines = append(lines, style.Render(string(row)))
+		lines = append(lines, b.String())
 	}
 	return strings.Join(lines, "\n")
 }

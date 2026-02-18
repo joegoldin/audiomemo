@@ -30,7 +30,7 @@ var (
 )
 
 var recordCmd = &cobra.Command{
-	Use:     "record [flags] [filename]",
+	Use:     "record [flags]",
 	Aliases: []string{"rec"},
 	Short:   "Record audio from microphone",
 	Long: `Record audio from your microphone with a live TUI showing VU meter and animation.
@@ -41,6 +41,7 @@ Examples:
   record -t
   record -d 5m --no-tui
   record -D "Built-in Microphone" -t --transcribe-args="--backend deepgram"`,
+	Args: cobra.NoArgs,
 	RunE: runRecord,
 }
 
@@ -115,21 +116,16 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	}
 
 	// Determine output path
-	var outputPath string
-	if len(args) > 0 {
-		outputPath = args[0]
+	var outputDir string
+	if rTemp {
+		outputDir = os.TempDir()
 	} else {
-		var outputDir string
-		if rTemp {
-			outputDir = os.TempDir()
-		} else {
-			outputDir = cfg.ResolveOutputDir()
-		}
-		if err := record.EnsureOutputDir(outputDir); err != nil {
-			return fmt.Errorf("failed to create output dir: %w", err)
-		}
-		outputPath = filepath.Join(outputDir, record.GenerateFilename(format, rName))
+		outputDir = cfg.ResolveOutputDir()
 	}
+	if err := record.EnsureOutputDir(outputDir); err != nil {
+		return fmt.Errorf("failed to create output dir: %w", err)
+	}
+	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, rName))
 
 	opts := record.RecordOpts{
 		Device:     device,
@@ -165,7 +161,6 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	fmt.Fprintf(os.Stderr, "Saved: %s\n", outputPath)
 	// Print just the path to stdout so it can be piped, e.g.:
 	//   transcribe $(record)
 	fmt.Println(outputPath)
