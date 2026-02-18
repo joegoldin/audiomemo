@@ -302,6 +302,53 @@ func TestResolveDeviceGroupPriorityOverAlias(t *testing.T) {
 	}
 }
 
+func TestNeedsOnboardingNewConfig(t *testing.T) {
+	cfg := Default()
+	if !cfg.NeedsOnboarding() {
+		t.Error("expected new default config to need onboarding")
+	}
+}
+
+func TestNeedsOnboardingCompleted(t *testing.T) {
+	cfg := Default()
+	cfg.OnboardVersion = CurrentOnboardVersion
+	if cfg.NeedsOnboarding() {
+		t.Error("expected config with current OnboardVersion to skip onboarding")
+	}
+}
+
+func TestNeedsOnboardingExistingSetup(t *testing.T) {
+	cfg := Default()
+	// OnboardVersion is 0 (default), but device and alias are already configured.
+	cfg.Record.Device = "mic"
+	cfg.Devices["mic"] = "alsa_input.usb-Blue_Microphones-00.mono-fallback"
+	if cfg.NeedsOnboarding() {
+		t.Error("expected config with existing device+alias to skip onboarding even with OnboardVersion=0")
+	}
+}
+
+func TestOnboardVersionRoundTrip(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	cfg := Default()
+	cfg.OnboardVersion = CurrentOnboardVersion
+
+	if err := cfg.SaveTo(path); err != nil {
+		t.Fatalf("SaveTo failed: %v", err)
+	}
+
+	loaded, err := LoadFrom(path)
+	if err != nil {
+		t.Fatalf("LoadFrom failed: %v", err)
+	}
+
+	if loaded.OnboardVersion != CurrentOnboardVersion {
+		t.Errorf("expected OnboardVersion %d after round-trip, got %d",
+			CurrentOnboardVersion, loaded.OnboardVersion)
+	}
+}
+
 func TestLoadFromFileWithDevices(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")

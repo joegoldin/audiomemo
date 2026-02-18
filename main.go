@@ -4,7 +4,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/joegilkes/audiotools/cmd"
+	"github.com/joegoldin/audiotools/cmd"
 )
 
 func main() {

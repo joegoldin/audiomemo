@@ -7,7 +7,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegilkes/audiotools/internal/record"
+	"github.com/joegoldin/audiotools/internal/record"
 )
 
 type State int
@@ -29,8 +29,6 @@ type Model struct {
 	level      float64
 	tick       int
 	anim       *Animation
-	picker     *DevicePicker
-	showPicker bool
 	transcribe bool // set when user presses Q to quit-and-transcribe
 	err        error
 	width      int
@@ -53,7 +51,6 @@ func NewModel(rec *record.Recorder, opts record.RecordOpts) *Model {
 		opts:      opts,
 		startTime: time.Now(),
 		anim:      NewAnimation(60, 9),
-		picker:    NewDevicePicker(),
 	}
 }
 
@@ -92,9 +89,6 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 
 	case tea.KeyMsg:
-		if m.showPicker {
-			return m.updatePicker(msg)
-		}
 		return m.handleKey(msg)
 
 	case tickMsg:
@@ -148,17 +142,6 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case key.Matches(msg, key.NewBinding(key.WithKeys("d"))):
-		m.showPicker = true
-		return m, nil
-	}
-	return m, nil
-}
-
-func (m *Model) updatePicker(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	switch {
-	case key.Matches(msg, key.NewBinding(key.WithKeys("esc", "q"))):
-		m.showPicker = false
 	}
 	return m, nil
 }
@@ -172,10 +155,6 @@ var (
 )
 
 func (m *Model) View() string {
-	if m.showPicker {
-		return m.picker.View()
-	}
-
 	// Status line
 	var status string
 	switch m.state {
@@ -209,7 +188,7 @@ func (m *Model) View() string {
 	outLine := infoStyle.Render(fmt.Sprintf("  out: %s", m.opts.OutputPath))
 
 	// Keys
-	keys := dimStyle.Render("  [p]ause  [q]uit  [Q]uit+transcribe  [d]evices")
+	keys := dimStyle.Render("  [p]ause  [q]uit  [Q]uit+transcribe")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header, "", center, "", micLine, outLine, "", keys,

@@ -11,11 +11,16 @@ import (
 	toml "github.com/pelletier/go-toml/v2"
 )
 
+// CurrentOnboardVersion is the latest onboarding schema version. Bump this
+// when the onboarding flow changes and existing users should re-onboard.
+const CurrentOnboardVersion = 1
+
 type Config struct {
-	Record       RecordConfig        `toml:"record"`
-	Devices      map[string]string   `toml:"devices"`
-	DeviceGroups map[string][]string `toml:"device_groups"`
-	Transcribe   TranscribeConfig    `toml:"transcribe"`
+	OnboardVersion int                 `toml:"onboard_version"`
+	Record         RecordConfig        `toml:"record"`
+	Devices        map[string]string   `toml:"devices"`
+	DeviceGroups   map[string][]string `toml:"device_groups"`
+	Transcribe     TranscribeConfig    `toml:"transcribe"`
 }
 
 type RecordConfig struct {
@@ -121,6 +126,20 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("HF_TOKEN"); v != "" && c.Transcribe.Whisper.HFToken == "" {
 		c.Transcribe.Whisper.HFToken = v
 	}
+}
+
+// NeedsOnboarding reports whether the interactive onboarding flow should be
+// shown. It returns false when the user has already completed the current
+// onboarding version, or when a device and at least one alias are already
+// configured (pre-onboarding setup).
+func (c *Config) NeedsOnboarding() bool {
+	if c.OnboardVersion >= CurrentOnboardVersion {
+		return false
+	}
+	if c.Record.Device != "" && len(c.Devices) > 0 {
+		return false
+	}
+	return true
 }
 
 func (c *Config) ResolveOutputDir() string {

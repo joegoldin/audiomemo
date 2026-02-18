@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joegilkes/audiotools/internal/config"
-	"github.com/joegilkes/audiotools/internal/transcribe"
+	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/transcribe"
 	"github.com/spf13/cobra"
 )
 

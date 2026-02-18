@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/joegilkes/audiotools/internal/config"
-	"github.com/joegilkes/audiotools/internal/record"
-	"github.com/joegilkes/audiotools/internal/tui"
+	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/record"
+	"github.com/joegoldin/audiotools/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +20,9 @@ var deviceCmd = &cobra.Command{
 		cfg, err := loadDeviceConfig()
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
+		}
+		if err := maybeOnboard(cfg, dConfig); err != nil {
+			return err
 		}
 		return tui.RunDeviceManager(cfg, dConfig)
 	},
@@ -195,6 +198,11 @@ func runDeviceGroup(cmd *cobra.Command, args []string) error {
 	aliases := strings.Split(aliasCSV, ",")
 	for i, a := range aliases {
 		aliases[i] = strings.TrimSpace(a)
+	}
+
+	// Validate: no collision with alias names
+	if _, exists := cfg.Devices[name]; exists {
+		return fmt.Errorf("name %q is already used as a device alias", name)
 	}
 
 	// Validate all aliases exist

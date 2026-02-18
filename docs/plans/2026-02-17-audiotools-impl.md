@@ -13,6 +13,7 @@
 ### Task 0: Create repo and bootstrap Go module
 
 **Files:**
+
 - Create: `/home/joe/Development/audiotools/`
 - Create: `/home/joe/Development/audiotools/main.go`
 - Create: `/home/joe/Development/audiotools/go.mod`
@@ -85,7 +86,7 @@ git init
 ```bash
 cd /home/joe/Development/audiotools
 nix develop --command bash -c '
-  go mod init github.com/joegilkes/audiotools
+  go mod init github.com/joegoldin/audiotools
   go get github.com/spf13/cobra@latest
   go get github.com/pelletier/go-toml/v2@latest
   go get github.com/charmbracelet/bubbletea@latest
@@ -104,7 +105,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/joegilkes/audiotools/cmd"
+	"github.com/joegoldin/audiotools/cmd"
 )
 
 func main() {
@@ -123,6 +124,7 @@ func main() {
 **Step 6: Create minimal cmd stubs so it compiles**
 
 Create `cmd/root.go`:
+
 ```go
 package cmd
 
@@ -153,6 +155,7 @@ func ExecuteRoot() {
 ```
 
 Create `cmd/record.go`:
+
 ```go
 package cmd
 
@@ -181,6 +184,7 @@ func ExecuteRecord() {
 ```
 
 Create `cmd/transcribe.go`:
+
 ```go
 package cmd
 
@@ -230,6 +234,7 @@ git commit -m "feat: bootstrap audiotools repo with Go module, cobra CLI, and ni
 ### Task 1: Config loading
 
 **Files:**
+
 - Create: `internal/config/config.go`
 - Test: `internal/config/config_test.go`
 - Create: `config.example.toml`
@@ -508,6 +513,7 @@ git commit -m "feat: config loading with TOML, XDG, env var support"
 ### Task 2: Transcriber interface and result types
 
 **Files:**
+
 - Create: `internal/transcribe/transcriber.go`
 - Create: `internal/transcribe/result.go`
 - Test: `internal/transcribe/result_test.go`
@@ -732,6 +738,7 @@ git commit -m "feat: transcriber interface and result formatting (text/json/srt/
 ### Task 3: Whisper backend
 
 **Files:**
+
 - Create: `internal/transcribe/whisper.go`
 - Test: `internal/transcribe/whisper_test.go`
 
@@ -934,6 +941,7 @@ git commit -m "feat: local whisper transcription backend"
 ### Task 4: Deepgram backend
 
 **Files:**
+
 - Create: `internal/transcribe/deepgram.go`
 - Test: `internal/transcribe/deepgram_test.go`
 
@@ -1201,6 +1209,7 @@ git commit -m "feat: deepgram transcription backend"
 ### Task 5: OpenAI backend
 
 **Files:**
+
 - Create: `internal/transcribe/openai.go`
 - Test: `internal/transcribe/openai_test.go`
 
@@ -1450,6 +1459,7 @@ git commit -m "feat: openai transcription backend"
 ### Task 6: Mistral Voxtral backend
 
 **Files:**
+
 - Create: `internal/transcribe/mistral.go`
 - Test: `internal/transcribe/mistral_test.go`
 
@@ -1700,6 +1710,7 @@ git commit -m "feat: mistral voxtral transcription backend"
 ### Task 7: Backend dispatcher and auto-detect
 
 **Files:**
+
 - Create: `internal/transcribe/dispatch.go`
 - Test: `internal/transcribe/dispatch_test.go`
 
@@ -1711,7 +1722,7 @@ package transcribe
 import (
 	"testing"
 
-	"github.com/joegilkes/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/config"
 )
 
 func TestAutoDetectWithExplicitBackend(t *testing.T) {
@@ -1791,7 +1802,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/joegilkes/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/config"
 )
 
 func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, error) {
@@ -1872,6 +1883,7 @@ git commit -m "feat: backend auto-detection and dispatcher"
 ### Task 8: Wire up transcribe command
 
 **Files:**
+
 - Modify: `cmd/transcribe.go`
 
 **Step 1: Wire flags and backend dispatch into transcribe command**
@@ -1888,8 +1900,8 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/joegilkes/audiotools/internal/config"
-	"github.com/joegilkes/audiotools/internal/transcribe"
+	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/transcribe"
 	"github.com/spf13/cobra"
 )
 
@@ -2026,6 +2038,7 @@ git commit -m "feat: wire transcribe command with flags, backend dispatch, stdin
 ### Task 9: FFmpeg recorder and device listing
 
 **Files:**
+
 - Create: `internal/record/recorder.go`
 - Create: `internal/record/devices.go`
 - Test: `internal/record/recorder_test.go`
@@ -2387,6 +2400,7 @@ git commit -m "feat: ffmpeg recorder, device listing, level parsing"
 ### Task 10: TUI - VU meter component
 
 **Files:**
+
 - Create: `internal/tui/vu.go`
 - Test: `internal/tui/vu_test.go`
 
@@ -2527,6 +2541,7 @@ git commit -m "feat: vertical VU meter component with color gradient"
 ### Task 11: TUI - Ambient animation component
 
 **Files:**
+
 - Create: `internal/tui/animation.go`
 - Test: `internal/tui/animation_test.go`
 
@@ -2652,6 +2667,7 @@ git commit -m "feat: ambient sine wave animation component"
 ### Task 12: TUI - Main model and device picker
 
 **Files:**
+
 - Create: `internal/tui/model.go`
 - Create: `internal/tui/devicepicker.go`
 
@@ -2667,7 +2683,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegilkes/audiotools/internal/record"
+	"github.com/joegoldin/audiotools/internal/record"
 )
 
 type State int
@@ -2881,7 +2897,7 @@ package tui
 
 import (
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegilkes/audiotools/internal/record"
+	"github.com/joegoldin/audiotools/internal/record"
 )
 
 type DevicePicker struct {
@@ -2936,6 +2952,7 @@ git commit -m "feat: bubbletea TUI model with VU meter, animation, device picker
 ### Task 13: Wire up record command
 
 **Files:**
+
 - Modify: `cmd/record.go`
 
 **Step 1: Replace cmd/record.go with full implementation**
@@ -2951,9 +2968,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/joegilkes/audiotools/internal/config"
-	"github.com/joegilkes/audiotools/internal/record"
-	"github.com/joegilkes/audiotools/internal/tui"
+	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/record"
+	"github.com/joegoldin/audiotools/internal/tui"
 	"github.com/spf13/cobra"
 )
 

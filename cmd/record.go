@@ -8,9 +8,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/joegilkes/audiotools/internal/config"
-	"github.com/joegilkes/audiotools/internal/record"
-	"github.com/joegilkes/audiotools/internal/tui"
+	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/record"
+	"github.com/joegoldin/audiotools/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -79,6 +79,10 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to load config: %w", err)
 	}
 
+	if err := maybeOnboard(cfg, rConfig); err != nil {
+		return err
+	}
+
 	if rListDevices {
 		devices, err := record.ListDevices()
 		if err != nil {
@@ -107,23 +111,39 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if rChannels != 0 {
 		channels = rChannels
 	}
-	deviceName := cfg.Record.Device
-	if rDevice != "" {
-		deviceName = rDevice
-	}
-	if deviceName == "" {
-		deviceName = "default"
-	}
 
-	devices, err := cfg.ResolveDevice(deviceName)
-	if err != nil {
-		return fmt.Errorf("failed to resolve device %q: %w", deviceName, err)
-	}
+	var devices []string
+	var deviceLabel string
 
-	// Build a human-readable label for the TUI mic line.
-	deviceLabel := deviceName
-	if group, ok := cfg.DeviceGroups[deviceName]; ok && len(group) > 1 {
-		deviceLabel = fmt.Sprintf("%s (%s)", deviceName, strings.Join(group, " + "))
+	if !cmd.Flags().Changed("device") && !rNoTUI {
+		result, err := tui.RunRecordPicker(cfg)
+		if err != nil {
+			return err
+		}
+		if result.Skipped {
+			return nil
+		}
+		devices = result.Devices
+		deviceLabel = result.DeviceLabel
+	} else {
+		deviceName := cfg.Record.Device
+		if rDevice != "" {
+			deviceName = rDevice
+		}
+		if deviceName == "" {
+			deviceName = "default"
+		}
+
+		devices, err = cfg.ResolveDevice(deviceName)
+		if err != nil {
+			return fmt.Errorf("failed to resolve device %q: %w", deviceName, err)
+		}
+
+		// Build a human-readable label for the TUI mic line.
+		deviceLabel = deviceName
+		if group, ok := cfg.DeviceGroups[deviceName]; ok && len(group) > 1 {
+			deviceLabel = fmt.Sprintf("%s (%s)", deviceName, strings.Join(group, " + "))
+		}
 	}
 
 	// Determine output path

@@ -1,3 +1,5 @@
+# onboard_version = 1
+
 [record]
 format = "ogg"
 sample_rate = 48000

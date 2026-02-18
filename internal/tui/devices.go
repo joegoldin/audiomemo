@@ -14,8 +14,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegilkes/audiotools/internal/config"
-	"github.com/joegilkes/audiotools/internal/record"
+	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiotools/internal/record"
 )
 
 // ---------------------------------------------------------------------------
@@ -173,7 +173,7 @@ func NewDeviceManager(cfg *config.Config, configPath string) *DeviceManager {
 // program, runs the TUI, and returns any error.
 func RunDeviceManager(cfg *config.Config, configPath string) error {
 	dm := NewDeviceManager(cfg, configPath)
-	p := tea.NewProgram(dm, tea.WithAltScreen())
+	p := tea.NewProgram(dm, tea.WithAltScreen(), tea.WithMouseCellMotion())
 	_, err := p.Run()
 	return err
 }
@@ -265,6 +265,15 @@ func (dm *DeviceManager) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				dm.testFile = ""
 			}
 			return dm, dm.startVU()
+		}
+		return dm, nil
+
+	case tea.MouseMsg:
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			return dm.handleKey(tea.KeyMsg{Type: tea.KeyUp})
+		case tea.MouseButtonWheelDown:
+			return dm.handleKey(tea.KeyMsg{Type: tea.KeyDown})
 		}
 		return dm, nil
 
