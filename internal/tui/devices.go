@@ -946,8 +946,9 @@ func (dm *DeviceManager) View() string {
 	right := dmBorderStyle.Width(rightWidth).Render(rightPanel)
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, right)
 
-	// VU bar
-	vuBar := dm.viewVUBar(totalWidth - 4)
+	// VU bar — content width is Width minus horizontal padding (1 each side)
+	vuContentWidth := totalWidth - 4 - 2
+	vuBar := dm.viewVUBar(vuContentWidth)
 	vuBox := dmBorderStyle.Width(totalWidth - 4).Render(vuBar)
 
 	// Status / keys
@@ -1078,8 +1079,7 @@ func (dm *DeviceManager) viewVUBar(width int) string {
 	}
 
 	dbStr := formatDB(dm.vuSmoothed)
-	// dbStr is like "-24.0 dB" (~8 chars), plus spacing/label overhead
-	labelWidth := len(dbStr) + 2 // " " + dbStr
+	dbVisual := lipgloss.Width(dbStr)
 
 	devName := ""
 	if dm.cursor < len(dm.devices) {
@@ -1090,15 +1090,23 @@ func (dm *DeviceManager) viewVUBar(width int) string {
 		}
 	}
 
-	// Reserve space for bar + label + device name, all on one line
-	barWidth := width - labelWidth
+	// Layout: bar + " " + dbStr [+ "  " + devName]
+	// Calculate bar width from remaining space
+	overhead := 1 + dbVisual // " " + dbStr
 	if devName != "" {
-		maxDevName := width / 3
-		if len(devName) > maxDevName {
-			devName = devName[:maxDevName-3] + "..."
+		devVisual := lipgloss.Width(devName)
+		maxDev := width / 3
+		if devVisual > maxDev {
+			// Truncate by runes to stay within maxDev columns
+			runes := []rune(devName)
+			for lipgloss.Width(string(runes)) > maxDev-3 && len(runes) > 0 {
+				runes = runes[:len(runes)-1]
+			}
+			devName = string(runes) + "..."
 		}
-		barWidth = width - labelWidth - len(devName) - 2
+		overhead += 2 + lipgloss.Width(devName) // "  " + devName
 	}
+	barWidth := width - overhead
 	if barWidth < 5 {
 		barWidth = 5
 	}
