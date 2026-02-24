@@ -1,4 +1,4 @@
-# audiotools Implementation Plan
+# audiomemo Implementation Plan
 
 > **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
 
@@ -14,24 +14,24 @@
 
 **Files:**
 
-- Create: `/home/joe/Development/audiotools/`
-- Create: `/home/joe/Development/audiotools/main.go`
-- Create: `/home/joe/Development/audiotools/go.mod`
-- Create: `/home/joe/Development/audiotools/flake.nix`
-- Create: `/home/joe/Development/audiotools/.gitignore`
+- Create: `/home/joe/Development/audiomemo/`
+- Create: `/home/joe/Development/audiomemo/main.go`
+- Create: `/home/joe/Development/audiomemo/go.mod`
+- Create: `/home/joe/Development/audiomemo/flake.nix`
+- Create: `/home/joe/Development/audiomemo/.gitignore`
 
 **Step 1: Create repo directory and init git**
 
 ```bash
-mkdir -p /home/joe/Development/audiotools
-cd /home/joe/Development/audiotools
+mkdir -p /home/joe/Development/audiomemo
+cd /home/joe/Development/audiomemo
 git init
 ```
 
 **Step 2: Create .gitignore**
 
 ```gitignore
-/audiotools
+/audiomemo
 /dist/
 *.test
 ```
@@ -51,31 +51,31 @@ git init
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        audiotools = pkgs.buildGoModule {
-          pname = "audiotools";
+        audiomemo = pkgs.buildGoModule {
+          pname = "audiomemo";
           version = "0.1.0";
           src = ./.;
           vendorHash = null;
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postInstall = ''
-            ln -s $out/bin/audiotools $out/bin/record
-            ln -s $out/bin/audiotools $out/bin/rec
-            ln -s $out/bin/audiotools $out/bin/transcribe
-            wrapProgram $out/bin/audiotools \
+            ln -s $out/bin/audiomemo $out/bin/record
+            ln -s $out/bin/audiomemo $out/bin/rec
+            ln -s $out/bin/audiomemo $out/bin/transcribe
+            wrapProgram $out/bin/audiomemo \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg ]}
           '';
         };
       in
       {
-        packages.default = audiotools;
-        packages.audiotools = audiotools;
+        packages.default = audiomemo;
+        packages.audiomemo = audiomemo;
         devShells.default = pkgs.mkShell {
           buildInputs = [ pkgs.go pkgs.gopls pkgs.ffmpeg ];
         };
       }
     ) // {
       overlays.default = final: prev: {
-        audiotools = self.packages.${final.system}.audiotools;
+        audiomemo = self.packages.${final.system}.audiomemo;
       };
     };
 }
@@ -84,9 +84,9 @@ git init
 **Step 4: Init Go module and install deps**
 
 ```bash
-cd /home/joe/Development/audiotools
+cd /home/joe/Development/audiomemo
 nix develop --command bash -c '
-  go mod init github.com/joegoldin/audiotools
+  go mod init github.com/joegoldin/audiomemo
   go get github.com/spf13/cobra@latest
   go get github.com/pelletier/go-toml/v2@latest
   go get github.com/charmbracelet/bubbletea@latest
@@ -105,7 +105,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/joegoldin/audiotools/cmd"
+	"github.com/joegoldin/audiomemo/cmd"
 )
 
 func main() {
@@ -136,7 +136,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "audiotools",
+	Use:   "audiomemo",
 	Short: "Audio recording and transcription tools",
 	Long:  "A CLI toolkit for recording audio and transcribing it using local or cloud backends.",
 }
@@ -216,8 +216,8 @@ func ExecuteTranscribe() {
 **Step 7: Build and verify**
 
 ```bash
-nix develop --command go build -o audiotools .
-./audiotools --help
+nix develop --command go build -o audiomemo .
+./audiomemo --help
 ```
 
 Expected: Shows help with `record` and `transcribe` subcommands.
@@ -226,7 +226,7 @@ Expected: Shows help with `record` and `transcribe` subcommands.
 
 ```bash
 git add -A
-git commit -m "feat: bootstrap audiotools repo with Go module, cobra CLI, and nix flake"
+git commit -m "feat: bootstrap audiomemo repo with Go module, cobra CLI, and nix flake"
 ```
 
 ---
@@ -421,7 +421,7 @@ func Load() (*Config, error) {
 		}
 		configDir = filepath.Join(home, ".config")
 	}
-	return LoadFrom(filepath.Join(configDir, "audiotools", "config.toml"))
+	return LoadFrom(filepath.Join(configDir, "audiomemo", "config.toml"))
 }
 
 func LoadFrom(path string) (*Config, error) {
@@ -844,7 +844,7 @@ func (w *Whisper) Transcribe(ctx context.Context, audioPath string, opts Transcr
 
 	// whisper outputs to a file named <input>.json in the same dir
 	// Use a temp dir for output
-	tmpDir, err := os.MkdirTemp("", "audiotools-whisper-*")
+	tmpDir, err := os.MkdirTemp("", "audiomemo-whisper-*")
 	if err != nil {
 		return nil, err
 	}
@@ -1722,7 +1722,7 @@ package transcribe
 import (
 	"testing"
 
-	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiomemo/internal/config"
 )
 
 func TestAutoDetectWithExplicitBackend(t *testing.T) {
@@ -1802,7 +1802,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiomemo/internal/config"
 )
 
 func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, error) {
@@ -1900,8 +1900,8 @@ import (
 	"os"
 	"os/signal"
 
-	"github.com/joegoldin/audiotools/internal/config"
-	"github.com/joegoldin/audiotools/internal/transcribe"
+	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/transcribe"
 	"github.com/spf13/cobra"
 )
 
@@ -2006,7 +2006,7 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 }
 
 func bufferStdin() (string, error) {
-	tmp, err := os.CreateTemp("", "audiotools-stdin-*")
+	tmp, err := os.CreateTemp("", "audiomemo-stdin-*")
 	if err != nil {
 		return "", err
 	}
@@ -2023,7 +2023,7 @@ func bufferStdin() (string, error) {
 **Step 2: Build and verify help output**
 
 ```bash
-nix develop --command go build -o audiotools . && ./audiotools transcribe --help
+nix develop --command go build -o audiomemo . && ./audiomemo transcribe --help
 ```
 
 **Step 3: Commit**
@@ -2683,7 +2683,7 @@ import (
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegoldin/audiotools/internal/record"
+	"github.com/joegoldin/audiomemo/internal/record"
 )
 
 type State int
@@ -2897,7 +2897,7 @@ package tui
 
 import (
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegoldin/audiotools/internal/record"
+	"github.com/joegoldin/audiomemo/internal/record"
 )
 
 type DevicePicker struct {
@@ -2937,7 +2937,7 @@ func (p *DevicePicker) View() string {
 **Step 3: Build to verify compilation**
 
 ```bash
-nix develop --command go build -o audiotools .
+nix develop --command go build -o audiomemo .
 ```
 
 **Step 4: Commit**
@@ -2968,9 +2968,9 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/joegoldin/audiotools/internal/config"
-	"github.com/joegoldin/audiotools/internal/record"
-	"github.com/joegoldin/audiotools/internal/tui"
+	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/record"
+	"github.com/joegoldin/audiomemo/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -3147,7 +3147,7 @@ func runPostTranscribe(audioPath string) error {
 **Step 2: Build and verify**
 
 ```bash
-nix develop --command go build -o audiotools . && ./audiotools record --help
+nix develop --command go build -o audiomemo . && ./audiomemo record --help
 ```
 
 **Step 3: Commit**
@@ -3181,11 +3181,11 @@ nix develop --command bash -c 'go vet ./... && go mod tidy'
 
 ```bash
 nix develop --command bash -c '
-  go build -o audiotools .
-  ln -sf audiotools rec
-  ln -sf audiotools record
-  ln -sf audiotools transcribe
-  ./audiotools --help
+  go build -o audiomemo .
+  ln -sf audiomemo rec
+  ln -sf audiomemo record
+  ln -sf audiomemo transcribe
+  ./audiomemo --help
   ./rec --help
   ./transcribe --help
 '
@@ -3205,7 +3205,7 @@ git commit -m "chore: fix compilation, tidy deps, verify argv[0] dispatch"
 **Step 1: Attempt nix build to get correct vendorHash**
 
 ```bash
-cd /home/joe/Development/audiotools
+cd /home/joe/Development/audiomemo
 nix build 2>&1 | grep "got:" | head -1
 ```
 
@@ -3219,12 +3219,12 @@ Replace `vendorHash = null;` with the hash from the error output.
 nix build && ls -la result/bin/
 ```
 
-Should show: `audiotools`, `rec`, `record`, `transcribe` symlinks.
+Should show: `audiomemo`, `rec`, `record`, `transcribe` symlinks.
 
 **Step 4: Verify wrapped binary has ffmpeg on PATH**
 
 ```bash
-./result/bin/audiotools transcribe --help
+./result/bin/audiomemo transcribe --help
 ```
 
 **Step 5: Commit**

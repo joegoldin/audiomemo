@@ -7,8 +7,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegoldin/audiotools/internal/config"
-	"github.com/joegoldin/audiotools/internal/record"
+	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/record"
 )
 
 // ---------------------------------------------------------------------------

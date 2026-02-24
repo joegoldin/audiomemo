@@ -8,13 +8,13 @@
 
 ## NAME
 
-audiotools - record audio and transcribe it
+audiomemo - record audio and transcribe it
 
 ## SYNOPSIS
 
-    audiotools record [flags]
-    audiotools transcribe [flags] <file>
-    audiotools device [command]
+    audiomemo record [flags]
+    audiomemo transcribe [flags] <file>
+    audiomemo device [command]
 
     record [flags]
     rec [flags]
@@ -84,8 +84,8 @@ Manage audio devices. Run without a subcommand for the interactive TUI.
 
 ## CONFIGURATION
 
-TOML config at `$XDG_CONFIG_HOME/audiotools/config.toml`
-(default `~/.config/audiotools/config.toml`).
+TOML config at `$XDG_CONFIG_HOME/audiomemo/config.toml`
+(default `~/.config/audiomemo/config.toml`).
 
 On first run, an onboarding TUI prompts for initial device setup.
 
@@ -154,24 +154,24 @@ Multi-device recording mixes all inputs via ffmpeg amix.
 
 ```nix
 # flake input
-audiotools.url = "github:joegoldin/audiotools";
+audiomemo.url = "github:joegoldin/audiomemo";
 
 # overlay
-audiotools-packages = inputs.audiotools.overlays.default;
+audiomemo-packages = inputs.audiomemo.overlays.default;
 
 # then add to packages
-home.packages = [ pkgs.audiotools ];
+home.packages = [ pkgs.audiomemo ];
 ```
 
 ### Go
 
-    go install github.com/joegoldin/audiotools@latest
+    go install github.com/joegoldin/audiomemo@latest
 
 ### Build from source
 
     nix build
     # or
-    go build -o audiotools .
+    go build -o audiomemo .
 
 ## DEPENDENCIES
 
@@ -181,7 +181,7 @@ The nix package wraps the binary with ffmpeg and whisper-cpp in PATH.
 
 ## FILES
 
-    ~/.config/audiotools/config.toml    configuration
+    ~/.config/audiomemo/config.toml    configuration
     ~/Recordings/                       default output directory
 
 ## EXAMPLES
@@ -205,4 +205,4 @@ The nix package wraps the binary with ffmpeg and whisper-cpp in PATH.
     cat audio.ogg | transcribe -
 
     # Manage devices interactively
-    audiotools device
+    audiomemo device

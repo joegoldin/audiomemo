@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os/exec"
 
-	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiomemo/internal/config"
 )
 
 func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, error) {

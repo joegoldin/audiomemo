@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/joegoldin/audiotools/internal/config"
-	"github.com/joegoldin/audiotools/internal/transcribe"
+	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/transcribe"
 	"github.com/spf13/cobra"
 )
 
@@ -210,7 +210,7 @@ func copyToClipboard(text string) error {
 }
 
 func bufferStdin() (string, error) {
-	tmp, err := os.CreateTemp("", "audiotools-stdin-*")
+	tmp, err := os.CreateTemp("", "audiomemo-stdin-*")
 	if err != nil {
 		return "", err
 	}

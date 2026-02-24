@@ -1,8 +1,8 @@
 package cmd
 
 import (
-	"github.com/joegoldin/audiotools/internal/config"
-	"github.com/joegoldin/audiotools/internal/tui"
+	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/tui"
 )
 
 // maybeOnboard runs the first-time onboarding TUI if the config indicates

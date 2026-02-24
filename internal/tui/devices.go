@@ -14,8 +14,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
-	"github.com/joegoldin/audiotools/internal/config"
-	"github.com/joegoldin/audiotools/internal/record"
+	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/record"
 )
 
 // ---------------------------------------------------------------------------
@@ -862,7 +862,7 @@ func (dm *DeviceManager) recordTestClip() tea.Cmd {
 	}
 	dev := dm.devices[dm.cursor]
 	return func() tea.Msg {
-		tmpFile, err := os.CreateTemp("", "audiotools-test-*.wav")
+		tmpFile, err := os.CreateTemp("", "audiomemo-test-*.wav")
 		if err != nil {
 			return dmTestDoneMsg{err: err}
 		}

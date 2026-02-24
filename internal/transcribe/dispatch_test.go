@@ -4,7 +4,7 @@ import (
 	"os/exec"
 	"testing"
 
-	"github.com/joegoldin/audiotools/internal/config"
+	"github.com/joegoldin/audiomemo/internal/config"
 )
 
 func TestAutoDetectWithExplicitBackend(t *testing.T) {

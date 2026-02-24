@@ -95,7 +95,7 @@ func Load() (*Config, error) {
 		}
 		configDir = filepath.Join(home, ".config")
 	}
-	return LoadFrom(filepath.Join(configDir, "audiotools", "config.toml"))
+	return LoadFrom(filepath.Join(configDir, "audiomemo", "config.toml"))
 }
 
 func LoadFrom(path string) (*Config, error) {
@@ -163,7 +163,7 @@ func defaultConfigPath() (string, error) {
 		}
 		configDir = filepath.Join(home, ".config")
 	}
-	return filepath.Join(configDir, "audiotools", "config.toml"), nil
+	return filepath.Join(configDir, "audiomemo", "config.toml"), nil
 }
 
 // Save writes the config to the default XDG config path.

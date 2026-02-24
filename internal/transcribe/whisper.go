@@ -126,7 +126,7 @@ func (w *Whisper) Transcribe(ctx context.Context, audioPath string, opts Transcr
 		return nil, fmt.Errorf("audio file not found: %w", err)
 	}
 
-	tmpDir, err := os.MkdirTemp("", "audiotools-whisper-*")
+	tmpDir, err := os.MkdirTemp("", "audiomemo-whisper-*")
 	if err != nil {
 		return nil, err
 	}

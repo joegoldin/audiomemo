@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/joegoldin/audiotools/internal/config"
-	"github.com/joegoldin/audiotools/internal/record"
-	"github.com/joegoldin/audiotools/internal/tui"
+	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/record"
+	"github.com/joegoldin/audiomemo/internal/tui"
 	"github.com/spf13/cobra"
 )
 

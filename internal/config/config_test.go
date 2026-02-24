@@ -195,7 +195,7 @@ func TestSaveUsesXDGPath(t *testing.T) {
 		t.Fatalf("Save failed: %v", err)
 	}
 
-	expectedPath := filepath.Join(dir, "audiotools", "config.toml")
+	expectedPath := filepath.Join(dir, "audiomemo", "config.toml")
 	if _, err := os.Stat(expectedPath); err != nil {
 		t.Fatalf("config file not found at expected XDG path %s: %v", expectedPath, err)
 	}

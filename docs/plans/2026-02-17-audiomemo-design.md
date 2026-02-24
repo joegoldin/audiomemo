@@ -1,4 +1,4 @@
-# audiotools - Audio Recording & Transcription CLI
+# audiomemo - Audio Recording & Transcription CLI
 
 ## Overview
 
@@ -12,17 +12,17 @@ A Go project providing two CLI tools (`record`/`rec` and `transcribe`) built as 
 - **Output format**: OGG/Opus by default
 - **Output location**: `~/Recordings/` by default, `--temp` for temp dir
 - **File naming**: `recording-2026-02-17T14-30-05.ogg`, with optional `--name` label prefix
-- **Config**: TOML at `$XDG_CONFIG_HOME/audiotools/config.toml`
-- **Binary dispatch**: Single binary, argv[0] detection → `rec`/`record` runs record, `transcribe` runs transcribe, `audiotools` shows subcommands
+- **Config**: TOML at `$XDG_CONFIG_HOME/audiomemo/config.toml`
+- **Binary dispatch**: Single binary, argv[0] detection → `rec`/`record` runs record, `transcribe` runs transcribe, `audiomemo` shows subcommands
 - **Transcription auto-detect**: CLI flag → config default → first configured API key (deepgram, openai, mistral) → local whisper on PATH → error
 
 ## Project Structure
 
 ```
-audiotools/
+audiomemo/
 ├── flake.nix
 ├── flake.lock
-├── go.mod                    # github.com/joe/audiotools (or similar)
+├── go.mod                    # github.com/joe/audiomemo (or similar)
 ├── go.sum
 ├── main.go                   # argv[0] dispatch
 ├── cmd/
@@ -269,7 +269,7 @@ ffmpeg -f avfoundation -i :<device_index> \
 
 ## Config File
 
-Located at `$XDG_CONFIG_HOME/audiotools/config.toml` (typically `~/.config/audiotools/config.toml`).
+Located at `$XDG_CONFIG_HOME/audiomemo/config.toml` (typically `~/.config/audiomemo/config.toml`).
 
 ```toml
 [record]
@@ -325,30 +325,30 @@ Config file missing entirely is fine - all defaults work without it.
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        audiotools = pkgs.buildGoModule {
-          pname = "audiotools";
+        audiomemo = pkgs.buildGoModule {
+          pname = "audiomemo";
           version = "0.1.0";
           src = ./.;
           vendorHash = ""; # update after go mod tidy
           nativeBuildInputs = [ pkgs.makeWrapper ];
           postInstall = ''
-            ln -s $out/bin/audiotools $out/bin/record
-            ln -s $out/bin/audiotools $out/bin/rec
-            ln -s $out/bin/audiotools $out/bin/transcribe
-            wrapProgram $out/bin/audiotools \
+            ln -s $out/bin/audiomemo $out/bin/record
+            ln -s $out/bin/audiomemo $out/bin/rec
+            ln -s $out/bin/audiomemo $out/bin/transcribe
+            wrapProgram $out/bin/audiomemo \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg ]}
           '';
         };
       in {
-        packages.default = audiotools;
-        packages.audiotools = audiotools;
+        packages.default = audiomemo;
+        packages.audiomemo = audiomemo;
         devShells.default = pkgs.mkShell {
           buildInputs = [ pkgs.go pkgs.gopls pkgs.ffmpeg ];
         };
       }
     ) // {
       overlays.default = final: prev: {
-        audiotools = self.packages.${final.system}.audiotools;
+        audiomemo = self.packages.${final.system}.audiomemo;
       };
     };
 }
@@ -358,22 +358,22 @@ Config file missing entirely is fine - all defaults work without it.
 
 In `flake.nix`:
 ```nix
-inputs.audiotools.url = "github:joe/audiotools";
+inputs.audiomemo.url = "github:joe/audiomemo";
 ```
 
 In overlays:
 ```nix
-audiotools-packages = inputs.audiotools.overlays.default;
+audiomemo-packages = inputs.audiomemo.overlays.default;
 ```
 
 In home packages or system packages:
 ```nix
-pkgs.audiotools
+pkgs.audiomemo
 ```
 
 Config via home-manager:
 ```nix
-xdg.configFile."audiotools/config.toml".source = ./audiotools.toml;
+xdg.configFile."audiomemo/config.toml".source = ./audiomemo.toml;
 ```
 
 Or generate from Nix options / wire API keys from agenix secrets.

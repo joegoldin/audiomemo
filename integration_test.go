@@ -13,11 +13,11 @@ import (
 var testBinary string
 
 func TestMain(m *testing.M) {
-	dir, err := os.MkdirTemp("", "audiotools-inttest-*")
+	dir, err := os.MkdirTemp("", "audiomemo-inttest-*")
 	if err != nil {
 		panic(err)
 	}
-	testBinary = filepath.Join(dir, "audiotools")
+	testBinary = filepath.Join(dir, "audiomemo")
 	cmd := exec.Command("go", "build", "-o", testBinary, ".")
 	cmd.Stderr = os.Stderr
 	if err := cmd.Run(); err != nil {

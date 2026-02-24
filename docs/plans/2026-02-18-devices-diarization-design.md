@@ -2,7 +2,7 @@
 
 ## Overview
 
-Three interconnected features for audiotools:
+Three interconnected features for audiomemo:
 
 1. **Diarization & transcription options** — per-backend flags (`--diarize`, `--smart-format`, `--punctuate`) with strict validation
 2. **Device aliases, groups & defaults** — named devices and multi-device groups stored in XDG config
@@ -10,7 +10,7 @@ Three interconnected features for audiotools:
 
 ## 1. Config Schema Changes
 
-The TOML config at `$XDG_CONFIG_HOME/audiotools/config.toml` gains three new sections:
+The TOML config at `$XDG_CONFIG_HOME/audiomemo/config.toml` gains three new sections:
 
 ```toml
 [record]
@@ -94,7 +94,7 @@ A new `config.Save()` / `config.SaveTo(path)` method writes the config back to T
 ### New CLI flags
 
 ```
-audiotools transcribe [flags] <file>
+audiomemo transcribe [flags] <file>
   --diarize          enable speaker diarization
   --smart-format     apply smart formatting (Deepgram)
   --punctuate        add punctuation (Deepgram)
@@ -209,7 +209,7 @@ Note: the `astats` VU filter runs on the mixed output, so the TUI shows the comb
 ### Invocation
 
 ```
-audiotools device       # launch device manager TUI
+audiomemo device       # launch device manager TUI
 ```
 
 New cobra subcommand in `cmd/device.go`. Also accessible from the recording TUI via the existing `[d]evices` keybinding.
@@ -217,10 +217,10 @@ New cobra subcommand in `cmd/device.go`. Also accessible from the recording TUI 
 Non-interactive fallbacks for scripts:
 
 ```
-audiotools device list                    # print all devices
-audiotools device alias mic "Blue Yeti"   # create alias
-audiotools device group zoom mic,desktop  # create group
-audiotools device default mic             # set default
+audiomemo device list                    # print all devices
+audiomemo device alias mic "Blue Yeti"   # create alias
+audiomemo device group zoom mic,desktop  # create group
+audiomemo device default mic             # set default
 ```
 
 ### TUI state machine
@@ -352,7 +352,7 @@ Suggested phasing (each phase is independently shippable):
 - Integration test: build ffmpeg args for 1, 2, 3 device groups.
 
 ### Phase 4: Device CLI subcommands
-- Add `cmd/device.go` with `audiotools device list|alias|group|default` subcommands.
+- Add `cmd/device.go` with `audiomemo device list|alias|group|default` subcommands.
 - Non-interactive, writes to config.
 - Tests for each subcommand.
 
@@ -362,4 +362,4 @@ Suggested phasing (each phase is independently shippable):
 - Live VU preview (short-lived ffmpeg subprocess per selected device).
 - Alias, group, default, delete workflows.
 - Test recording with playback.
-- Wire into `audiotools device` (no args = TUI) and recording TUI `[d]` keybinding.
+- Wire into `audiomemo device` (no args = TUI) and recording TUI `[d]` keybinding.

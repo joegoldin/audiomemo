@@ -1,4 +1,4 @@
-module github.com/joegoldin/audiotools
+module github.com/joegoldin/audiomemo
 
 go 1.25.5
 

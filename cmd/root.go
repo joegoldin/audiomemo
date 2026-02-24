@@ -8,7 +8,7 @@ import (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "audiotools",
+	Use:   "audiomemo",
 	Short: "Audio recording and transcription tools",
 	Long:  "A CLI toolkit for recording audio and transcribing it using local or cloud backends.",
 }
