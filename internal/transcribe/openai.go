@@ -33,7 +33,7 @@ func (o *OpenAI) Transcribe(ctx context.Context, audioPath string, opts Transcri
 		return nil, fmt.Errorf("OpenAI API key not configured (set OPENAI_API_KEY or config)")
 	}
 
-	if err := validateOpts(o.Name(), opts, false, false, false); err != nil {
+	if err := validateOpts(o.Name(), opts, false, false, false, false, false); err != nil {
 		return nil, err
 	}
 

@@ -33,7 +33,7 @@ func (m *Mistral) Transcribe(ctx context.Context, audioPath string, opts Transcr
 		return nil, fmt.Errorf("Mistral API key not configured (set MISTRAL_API_KEY or config)")
 	}
 
-	if err := validateOpts(m.Name(), opts, false, false, false); err != nil {
+	if err := validateOpts(m.Name(), opts, false, false, false, false, false); err != nil {
 		return nil, err
 	}
 

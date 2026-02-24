@@ -35,6 +35,8 @@ type TranscribeOpts struct {
 	Diarize     bool
 	SmartFormat bool
 	Punctuate   bool
+	FillerWords bool
+	Numerals    bool
 }
 
 type Transcriber interface {
@@ -44,7 +46,7 @@ type Transcriber interface {
 
 // validateOpts checks that the requested transcription options are supported by the backend.
 // Returns an error if an unsupported option is requested.
-func validateOpts(backendName string, opts TranscribeOpts, supportsDiarize, supportsSmartFormat, supportsPunctuate bool) error {
+func validateOpts(backendName string, opts TranscribeOpts, supportsDiarize, supportsSmartFormat, supportsPunctuate, supportsFillerWords, supportsNumerals bool) error {
 	if opts.Diarize && !supportsDiarize {
 		return fmt.Errorf("%s does not support --diarize", backendName)
 	}
@@ -53,6 +55,12 @@ func validateOpts(backendName string, opts TranscribeOpts, supportsDiarize, supp
 	}
 	if opts.Punctuate && !supportsPunctuate {
 		return fmt.Errorf("%s does not support --punctuate", backendName)
+	}
+	if opts.FillerWords && !supportsFillerWords {
+		return fmt.Errorf("%s does not support --filler-words", backendName)
+	}
+	if opts.Numerals && !supportsNumerals {
+		return fmt.Errorf("%s does not support --numerals", backendName)
 	}
 	return nil
 }

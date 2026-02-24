@@ -59,18 +59,31 @@ func TestDeepgramParseResponse(t *testing.T) {
 
 func TestDeepgramBuildQueryParams(t *testing.T) {
 	d := NewDeepgram("key", "nova-3")
-	params := d.buildQuery(TranscribeOpts{Language: "en", Model: "nova-2", SmartFormat: true, Punctuate: true})
+	params := d.buildQuery(TranscribeOpts{
+		Language: "en", Model: "nova-2",
+		SmartFormat: true, Punctuate: true, Diarize: true,
+		FillerWords: true, Numerals: true,
+	})
 	if params.Get("model") != "nova-2" {
 		t.Errorf("expected nova-2, got %s", params.Get("model"))
 	}
 	if params.Get("language") != "en" {
 		t.Errorf("expected en, got %s", params.Get("language"))
 	}
-	if params.Get("smart_format") != "true" {
-		t.Errorf("expected smart_format true")
+	for _, param := range []string{"smart_format", "diarize", "punctuate", "filler_words", "numerals"} {
+		if params.Get(param) != "true" {
+			t.Errorf("expected %s=true, got %q", param, params.Get(param))
+		}
 	}
-	if params.Get("punctuate") != "true" {
-		t.Errorf("expected punctuate true")
+}
+
+func TestDeepgramBuildQueryParamsDisabled(t *testing.T) {
+	d := NewDeepgram("key", "nova-3")
+	params := d.buildQuery(TranscribeOpts{Language: "en", Model: "nova-2"})
+	for _, param := range []string{"smart_format", "diarize", "punctuate", "filler_words", "numerals"} {
+		if params.Get(param) != "" {
+			t.Errorf("expected %s to be absent, got %q", param, params.Get(param))
+		}
 	}
 }
 

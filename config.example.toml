@@ -19,6 +19,11 @@ output_dir = "~/Recordings"
 [transcribe.deepgram]
 # api_key = ""
 # model = "nova-3"
+# smart_format = true
+# diarize = true
+# punctuate = true
+# filler_words = true
+# numerals = true
 
 [transcribe.openai]
 # api_key = ""

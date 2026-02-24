@@ -28,6 +28,8 @@ var (
 	tDiarize     bool
 	tSmartFormat bool
 	tPunctuate   bool
+	tFillerWords bool
+	tNumerals    bool
 )
 
 var transcribeCmd = &cobra.Command{
@@ -58,6 +60,8 @@ func init() {
 	transcribeCmd.Flags().BoolVar(&tDiarize, "diarize", false, "enable speaker diarization")
 	transcribeCmd.Flags().BoolVar(&tSmartFormat, "smart-format", false, "apply smart formatting (Deepgram)")
 	transcribeCmd.Flags().BoolVar(&tPunctuate, "punctuate", false, "add punctuation (Deepgram)")
+	transcribeCmd.Flags().BoolVar(&tFillerWords, "filler-words", false, "include filler words (Deepgram)")
+	transcribeCmd.Flags().BoolVar(&tNumerals, "numerals", false, "convert numbers to numerals (Deepgram)")
 }
 
 func ExecuteTranscribe() {
@@ -126,6 +130,20 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	fillerWords := tFillerWords
+	numerals := tNumerals
+
+	if !cmd.Flags().Changed("filler-words") {
+		if backend.Name() == "deepgram" {
+			fillerWords = cfg.Transcribe.Deepgram.FillerWords
+		}
+	}
+	if !cmd.Flags().Changed("numerals") {
+		if backend.Name() == "deepgram" {
+			numerals = cfg.Transcribe.Deepgram.Numerals
+		}
+	}
+
 	opts := transcribe.TranscribeOpts{
 		Model:       tModel,
 		Language:    tLanguage,
@@ -134,6 +152,8 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		Diarize:     diarize,
 		SmartFormat: smartFormat,
 		Punctuate:   punctuate,
+		FillerWords: fillerWords,
+		Numerals:    numerals,
 	}
 
 	if tVerbose {

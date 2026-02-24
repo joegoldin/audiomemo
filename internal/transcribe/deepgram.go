@@ -31,7 +31,7 @@ func (d *Deepgram) Transcribe(ctx context.Context, audioPath string, opts Transc
 		return nil, fmt.Errorf("deepgram API key not configured (set DEEPGRAM_API_KEY or config)")
 	}
 
-	if err := validateOpts(d.Name(), opts, true, true, true); err != nil {
+	if err := validateOpts(d.Name(), opts, true, true, true, true, true); err != nil {
 		return nil, err
 	}
 
@@ -86,6 +86,12 @@ func (d *Deepgram) buildQuery(opts TranscribeOpts) url.Values {
 	}
 	if opts.Diarize {
 		q.Set("diarize", "true")
+	}
+	if opts.FillerWords {
+		q.Set("filler_words", "true")
+	}
+	if opts.Numerals {
+		q.Set("numerals", "true")
 	}
 
 	if opts.Language != "" {

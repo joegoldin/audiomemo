@@ -110,7 +110,7 @@ func (w *Whisper) Transcribe(ctx context.Context, audioPath string, opts Transcr
 	// whisperx supports diarize; all other variants do not.
 	// No whisper variant supports smart_format or punctuate.
 	supportsDiarize := w.variant == variantWhisperX
-	if err := validateOpts(w.Name(), opts, supportsDiarize, false, false); err != nil {
+	if err := validateOpts(w.Name(), opts, supportsDiarize, false, false, false, false); err != nil {
 		return nil, err
 	}
 

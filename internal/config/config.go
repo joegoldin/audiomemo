@@ -54,6 +54,8 @@ type DeepgramConfig struct {
 	Diarize     bool   `toml:"diarize"`
 	SmartFormat bool   `toml:"smart_format"`
 	Punctuate   bool   `toml:"punctuate"`
+	FillerWords bool   `toml:"filler_words"`
+	Numerals    bool   `toml:"numerals"`
 }
 
 type OpenAIConfig struct {
@@ -79,7 +81,7 @@ func Default() *Config {
 		Transcribe: TranscribeConfig{
 			OutputFormat: "text",
 			Whisper:      WhisperConfig{Model: "base", Binary: "whisper"},
-			Deepgram:     DeepgramConfig{Model: "nova-3"},
+			Deepgram:     DeepgramConfig{Model: "nova-3", SmartFormat: true, Diarize: true, Punctuate: true, FillerWords: true, Numerals: true},
 			OpenAI:       OpenAIConfig{Model: "gpt-4o-transcribe"},
 			Mistral:      MistralConfig{Model: "voxtral-mini-latest"},
 		},
