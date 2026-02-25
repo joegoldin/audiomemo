@@ -145,6 +145,8 @@ func TestTranscribeUnknownBackend(t *testing.T) {
 
 func TestTranscribeDeepgramNoKey(t *testing.T) {
 	t.Setenv("DEEPGRAM_API_KEY", "")
+	t.Setenv("DEEPGRAM_API_KEY_FILE", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	_, stderr, err := run(t, "transcribe", "-b", "deepgram", testAudio)
 	if err == nil {
 		t.Error("expected error without API key")
@@ -156,6 +158,8 @@ func TestTranscribeDeepgramNoKey(t *testing.T) {
 
 func TestTranscribeOpenAINoKey(t *testing.T) {
 	t.Setenv("OPENAI_API_KEY", "")
+	t.Setenv("OPENAI_API_KEY_FILE", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	_, stderr, err := run(t, "transcribe", "-b", "openai", testAudio)
 	if err == nil {
 		t.Error("expected error without API key")
@@ -167,6 +171,8 @@ func TestTranscribeOpenAINoKey(t *testing.T) {
 
 func TestTranscribeMistralNoKey(t *testing.T) {
 	t.Setenv("MISTRAL_API_KEY", "")
+	t.Setenv("MISTRAL_API_KEY_FILE", "")
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
 	_, stderr, err := run(t, "transcribe", "-b", "mistral", testAudio)
 	if err == nil {
 		t.Error("expected error without API key")
@@ -615,5 +621,125 @@ func TestCompletionZsh(t *testing.T) {
 	}
 	if stdout == "" {
 		t.Error("zsh completion should not be empty")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Transcribe latest: subcommand tests
+// ---------------------------------------------------------------------------
+
+func TestTranscribeLatestHelp(t *testing.T) {
+	stdout, _, err := run(t, "transcribe", "latest", "--help")
+	if err != nil {
+		t.Fatalf("transcribe latest --help failed: %v", err)
+	}
+	if !strings.Contains(stdout, "newest audio file") {
+		t.Error("help should mention newest audio file")
+	}
+	if !strings.Contains(stdout, "[name]") {
+		t.Error("help should show optional name argument")
+	}
+}
+
+func TestTranscribeLatestNoFiles(t *testing.T) {
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	os.WriteFile(configPath, []byte(`
+[record]
+output_dir = "`+filepath.Join(dir, "recordings")+`"
+`), 0644)
+	os.MkdirAll(filepath.Join(dir, "recordings"), 0755)
+
+	_, stderr, err := run(t, "transcribe", "latest", "--config", configPath)
+	if err == nil {
+		t.Error("expected error when no audio files exist")
+	}
+	if !strings.Contains(stderr, "no audio files") {
+		t.Errorf("error should mention no audio files, got: %s", stderr)
+	}
+}
+
+func TestTranscribeLatestFindsNewest(t *testing.T) {
+	requireWhisperCPP(t)
+
+	dir := t.TempDir()
+	recDir := filepath.Join(dir, "recordings")
+	os.MkdirAll(recDir, 0755)
+
+	// Copy testAudio as two recordings with different times.
+	data, _ := os.ReadFile(testAudio)
+	old := filepath.Join(recDir, "recording-old.ogg")
+	os.WriteFile(old, []byte("not real audio"), 0644)
+	newest := filepath.Join(recDir, "recording-new.ogg")
+	os.WriteFile(newest, data, 0644)
+
+	configPath := filepath.Join(dir, "config.toml")
+	os.WriteFile(configPath, []byte(`
+[record]
+output_dir = "`+recDir+`"
+`), 0644)
+
+	_, stderr, err := run(t, "transcribe", "latest", "-b", "whisper-cpp", "--config", configPath)
+	if err != nil {
+		t.Fatalf("transcribe latest failed: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(stderr, "recording-new.ogg") {
+		t.Errorf("should transcribe the newest file, stderr: %s", stderr)
+	}
+}
+
+func TestTranscribeLatestWithName(t *testing.T) {
+	requireWhisperCPP(t)
+
+	dir := t.TempDir()
+	recDir := filepath.Join(dir, "recordings")
+	os.MkdirAll(recDir, 0755)
+
+	data, _ := os.ReadFile(testAudio)
+	original := filepath.Join(recDir, "recording-2025-01-01T12-00-00.ogg")
+	os.WriteFile(original, data, 0644)
+
+	configPath := filepath.Join(dir, "config.toml")
+	os.WriteFile(configPath, []byte(`
+[record]
+output_dir = "`+recDir+`"
+`), 0644)
+
+	_, stderr, err := run(t, "transcribe", "latest", "standup", "-b", "whisper-cpp", "--config", configPath)
+	if err != nil {
+		t.Fatalf("transcribe latest with name failed: %v\nstderr: %s", err, stderr)
+	}
+	if !strings.Contains(stderr, "standup") {
+		t.Errorf("should show renamed file in output, stderr: %s", stderr)
+	}
+
+	// Original file should be renamed.
+	if _, err := os.Stat(original); err == nil {
+		t.Error("original file should have been renamed")
+	}
+	// Renamed file should exist.
+	entries, _ := os.ReadDir(recDir)
+	found := false
+	for _, e := range entries {
+		if strings.Contains(e.Name(), "standup") {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("renamed file with 'standup' label should exist")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Record: positional name argument
+// ---------------------------------------------------------------------------
+
+func TestRecordHelpShowsPositionalName(t *testing.T) {
+	stdout, _, err := run(t, "record", "--help")
+	if err != nil {
+		t.Fatalf("record --help failed: %v", err)
+	}
+	if !strings.Contains(stdout, "[name]") {
+		t.Error("help should show optional [name] argument")
 	}
 }

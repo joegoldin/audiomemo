@@ -49,19 +49,20 @@ Examples:
 }
 
 func init() {
-	transcribeCmd.Flags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
-	transcribeCmd.Flags().StringVarP(&tModel, "model", "m", "", "model name (backend-specific)")
-	transcribeCmd.Flags().StringVarP(&tLanguage, "language", "l", "", "language hint (ISO 639-1)")
-	transcribeCmd.Flags().StringVarP(&tOutput, "output", "o", "", "output file (default: stdout)")
-	transcribeCmd.Flags().StringVarP(&tFormat, "format", "f", "text", "output format (text, json, srt, vtt)")
-	transcribeCmd.Flags().BoolVarP(&tVerbose, "verbose", "v", false, "show progress and timing info")
-	transcribeCmd.Flags().BoolVarP(&tCopy, "copy", "C", false, "copy output to clipboard")
-	transcribeCmd.Flags().StringVar(&tConfig, "config", "", "config file path")
-	transcribeCmd.Flags().BoolVar(&tDiarize, "diarize", false, "enable speaker diarization")
-	transcribeCmd.Flags().BoolVar(&tSmartFormat, "smart-format", false, "apply smart formatting (Deepgram)")
-	transcribeCmd.Flags().BoolVar(&tPunctuate, "punctuate", false, "add punctuation (Deepgram)")
-	transcribeCmd.Flags().BoolVar(&tFillerWords, "filler-words", false, "include filler words (Deepgram)")
-	transcribeCmd.Flags().BoolVar(&tNumerals, "numerals", false, "convert numbers to numerals (Deepgram)")
+	transcribeCmd.AddCommand(transcribeLatestCmd)
+	transcribeCmd.PersistentFlags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
+	transcribeCmd.PersistentFlags().StringVarP(&tModel, "model", "m", "", "model name (backend-specific)")
+	transcribeCmd.PersistentFlags().StringVarP(&tLanguage, "language", "l", "", "language hint (ISO 639-1)")
+	transcribeCmd.PersistentFlags().StringVarP(&tOutput, "output", "o", "", "output file (default: stdout)")
+	transcribeCmd.PersistentFlags().StringVarP(&tFormat, "format", "f", "text", "output format (text, json, srt, vtt)")
+	transcribeCmd.PersistentFlags().BoolVarP(&tVerbose, "verbose", "v", false, "show progress and timing info")
+	transcribeCmd.PersistentFlags().BoolVarP(&tCopy, "copy", "C", false, "copy output to clipboard")
+	transcribeCmd.PersistentFlags().StringVar(&tConfig, "config", "", "config file path")
+	transcribeCmd.PersistentFlags().BoolVar(&tDiarize, "diarize", false, "enable speaker diarization")
+	transcribeCmd.PersistentFlags().BoolVar(&tSmartFormat, "smart-format", false, "apply smart formatting (Deepgram)")
+	transcribeCmd.PersistentFlags().BoolVar(&tPunctuate, "punctuate", false, "add punctuation (Deepgram)")
+	transcribeCmd.PersistentFlags().BoolVar(&tFillerWords, "filler-words", false, "include filler words (Deepgram)")
+	transcribeCmd.PersistentFlags().BoolVar(&tNumerals, "numerals", false, "convert numbers to numerals (Deepgram)")
 }
 
 func ExecuteTranscribe() {

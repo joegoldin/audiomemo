@@ -31,18 +31,20 @@ var (
 )
 
 var recordCmd = &cobra.Command{
-	Use:     "record [flags]",
+	Use:     "record [flags] [name]",
 	Aliases: []string{"rec"},
 	Short:   "Record audio from microphone",
 	Long: `Record audio from your microphone with a live TUI showing VU meter and animation.
 
+An optional name can be passed as a positional argument to label the recording.
+
 Examples:
   record
-  record -n meeting
-  record -t
+  record meeting
+  rec standup -t
   record -d 5m --no-tui
   record -D "Built-in Microphone" -t --transcribe-args="--backend deepgram"`,
-	Args: cobra.NoArgs,
+	Args: cobra.MaximumNArgs(1),
 	RunE: runRecord,
 }
 
@@ -158,7 +160,12 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if err := record.EnsureOutputDir(outputDir); err != nil {
 		return fmt.Errorf("failed to create output dir: %w", err)
 	}
-	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, rName))
+	// Positional arg takes priority, then -n flag.
+	name := rName
+	if len(args) > 0 && args[0] != "" {
+		name = args[0]
+	}
+	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
 
 	opts := record.RecordOpts{
 		Device:      devices[0],
