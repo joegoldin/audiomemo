@@ -143,6 +143,11 @@ func runRecord(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to resolve device %q: %w", deviceName, err)
 		}
 
+		// Resolve any pretty/description names to raw PulseAudio names.
+		if availDevices, listErr := record.ListDevices(); listErr == nil {
+			devices = record.ResolveDeviceNames(devices, availDevices)
+		}
+
 		// Build a human-readable label for the TUI mic line.
 		deviceLabel = deviceName
 		if group, ok := cfg.DeviceGroups[deviceName]; ok && len(group) > 1 {
