@@ -42,14 +42,16 @@ type TranscribeConfig struct {
 }
 
 type WhisperConfig struct {
-	Model   string `toml:"model"`
-	Binary  string `toml:"binary"`
-	HFToken string `toml:"hf_token"`
-	Diarize bool   `toml:"diarize"`
+	Model       string `toml:"model"`
+	Binary      string `toml:"binary"`
+	HFToken     string `toml:"hf_token"`
+	HFTokenFile string `toml:"hf_token_file"`
+	Diarize     bool   `toml:"diarize"`
 }
 
 type DeepgramConfig struct {
 	APIKey      string `toml:"api_key"`
+	APIKeyFile  string `toml:"api_key_file"`
 	Model       string `toml:"model"`
 	Diarize     bool   `toml:"diarize"`
 	SmartFormat bool   `toml:"smart_format"`
@@ -59,13 +61,15 @@ type DeepgramConfig struct {
 }
 
 type OpenAIConfig struct {
-	APIKey string `toml:"api_key"`
-	Model  string `toml:"model"`
+	APIKey     string `toml:"api_key"`
+	APIKeyFile string `toml:"api_key_file"`
+	Model      string `toml:"model"`
 }
 
 type MistralConfig struct {
-	APIKey string `toml:"api_key"`
-	Model  string `toml:"model"`
+	APIKey     string `toml:"api_key"`
+	APIKeyFile string `toml:"api_key_file"`
+	Model      string `toml:"model"`
 }
 
 func Default() *Config {
@@ -116,6 +120,7 @@ func LoadFrom(path string) (*Config, error) {
 }
 
 func (c *Config) ApplyEnv() {
+	// Direct env vars (highest priority).
 	if v := os.Getenv("DEEPGRAM_API_KEY"); v != "" {
 		c.Transcribe.Deepgram.APIKey = v
 	}
@@ -128,6 +133,51 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("HF_TOKEN"); v != "" && c.Transcribe.Whisper.HFToken == "" {
 		c.Transcribe.Whisper.HFToken = v
 	}
+
+	// Env var file paths (second priority).
+	if c.Transcribe.Deepgram.APIKey == "" {
+		if v := os.Getenv("DEEPGRAM_API_KEY_FILE"); v != "" {
+			c.Transcribe.Deepgram.APIKey = readKeyFile(v)
+		}
+	}
+	if c.Transcribe.OpenAI.APIKey == "" {
+		if v := os.Getenv("OPENAI_API_KEY_FILE"); v != "" {
+			c.Transcribe.OpenAI.APIKey = readKeyFile(v)
+		}
+	}
+	if c.Transcribe.Mistral.APIKey == "" {
+		if v := os.Getenv("MISTRAL_API_KEY_FILE"); v != "" {
+			c.Transcribe.Mistral.APIKey = readKeyFile(v)
+		}
+	}
+	if c.Transcribe.Whisper.HFToken == "" {
+		if v := os.Getenv("HF_TOKEN_FILE"); v != "" {
+			c.Transcribe.Whisper.HFToken = readKeyFile(v)
+		}
+	}
+
+	// Config file paths (lowest priority).
+	if c.Transcribe.Deepgram.APIKey == "" && c.Transcribe.Deepgram.APIKeyFile != "" {
+		c.Transcribe.Deepgram.APIKey = readKeyFile(c.Transcribe.Deepgram.APIKeyFile)
+	}
+	if c.Transcribe.OpenAI.APIKey == "" && c.Transcribe.OpenAI.APIKeyFile != "" {
+		c.Transcribe.OpenAI.APIKey = readKeyFile(c.Transcribe.OpenAI.APIKeyFile)
+	}
+	if c.Transcribe.Mistral.APIKey == "" && c.Transcribe.Mistral.APIKeyFile != "" {
+		c.Transcribe.Mistral.APIKey = readKeyFile(c.Transcribe.Mistral.APIKeyFile)
+	}
+	if c.Transcribe.Whisper.HFToken == "" && c.Transcribe.Whisper.HFTokenFile != "" {
+		c.Transcribe.Whisper.HFToken = readKeyFile(c.Transcribe.Whisper.HFTokenFile)
+	}
+}
+
+// readKeyFile reads a file and returns its trimmed contents, or empty string on error.
+func readKeyFile(path string) string {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(data))
 }
 
 // NeedsOnboarding reports whether the interactive onboarding flow should be

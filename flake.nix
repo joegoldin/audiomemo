@@ -64,5 +64,6 @@
       overlays.default = final: prev: {
         audiomemo = self.packages.${final.system}.audiomemo;
       };
+      homeManagerModules.default = import ./nix/home-manager.nix;
     };
 }

@@ -77,6 +77,101 @@ func TestEnvVarOverridesConfig(t *testing.T) {
 	}
 }
 
+func TestEnvVarFileOverridesConfig(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "deepgram_key")
+	os.WriteFile(keyFile, []byte("file-key\n"), 0600)
+
+	t.Setenv("DEEPGRAM_API_KEY_FILE", keyFile)
+	cfg := Default()
+	cfg.ApplyEnv()
+	if cfg.Transcribe.Deepgram.APIKey != "file-key" {
+		t.Errorf("expected file-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+	}
+}
+
+func TestDirectEnvVarTakesPriorityOverFile(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "deepgram_key")
+	os.WriteFile(keyFile, []byte("file-key"), 0600)
+
+	t.Setenv("DEEPGRAM_API_KEY", "direct-key")
+	t.Setenv("DEEPGRAM_API_KEY_FILE", keyFile)
+	cfg := Default()
+	cfg.ApplyEnv()
+	if cfg.Transcribe.Deepgram.APIKey != "direct-key" {
+		t.Errorf("expected direct-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+	}
+}
+
+func TestConfigAPIKeyFileFallback(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "deepgram_key")
+	os.WriteFile(keyFile, []byte("  config-file-key  \n"), 0600)
+
+	cfg := Default()
+	cfg.Transcribe.Deepgram.APIKeyFile = keyFile
+	cfg.ApplyEnv()
+	if cfg.Transcribe.Deepgram.APIKey != "config-file-key" {
+		t.Errorf("expected config-file-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+	}
+}
+
+func TestConfigAPIKeyTakesPriorityOverKeyFile(t *testing.T) {
+	dir := t.TempDir()
+	keyFile := filepath.Join(dir, "deepgram_key")
+	os.WriteFile(keyFile, []byte("file-key"), 0600)
+
+	cfg := Default()
+	cfg.Transcribe.Deepgram.APIKey = "inline-key"
+	cfg.Transcribe.Deepgram.APIKeyFile = keyFile
+	cfg.ApplyEnv()
+	if cfg.Transcribe.Deepgram.APIKey != "inline-key" {
+		t.Errorf("expected inline-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+	}
+}
+
+func TestAPIKeyFileAllBackends(t *testing.T) {
+	dir := t.TempDir()
+	dgFile := filepath.Join(dir, "deepgram")
+	oaFile := filepath.Join(dir, "openai")
+	msFile := filepath.Join(dir, "mistral")
+	hfFile := filepath.Join(dir, "hftoken")
+	os.WriteFile(dgFile, []byte("dg-key"), 0600)
+	os.WriteFile(oaFile, []byte("oa-key"), 0600)
+	os.WriteFile(msFile, []byte("ms-key"), 0600)
+	os.WriteFile(hfFile, []byte("hf-key"), 0600)
+
+	cfg := Default()
+	cfg.Transcribe.Deepgram.APIKeyFile = dgFile
+	cfg.Transcribe.OpenAI.APIKeyFile = oaFile
+	cfg.Transcribe.Mistral.APIKeyFile = msFile
+	cfg.Transcribe.Whisper.HFTokenFile = hfFile
+	cfg.ApplyEnv()
+
+	if cfg.Transcribe.Deepgram.APIKey != "dg-key" {
+		t.Errorf("deepgram: expected dg-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+	}
+	if cfg.Transcribe.OpenAI.APIKey != "oa-key" {
+		t.Errorf("openai: expected oa-key, got %s", cfg.Transcribe.OpenAI.APIKey)
+	}
+	if cfg.Transcribe.Mistral.APIKey != "ms-key" {
+		t.Errorf("mistral: expected ms-key, got %s", cfg.Transcribe.Mistral.APIKey)
+	}
+	if cfg.Transcribe.Whisper.HFToken != "hf-key" {
+		t.Errorf("hftoken: expected hf-key, got %s", cfg.Transcribe.Whisper.HFToken)
+	}
+}
+
+func TestAPIKeyFileMissing(t *testing.T) {
+	cfg := Default()
+	cfg.Transcribe.Deepgram.APIKeyFile = "/nonexistent/key"
+	cfg.ApplyEnv()
+	if cfg.Transcribe.Deepgram.APIKey != "" {
+		t.Errorf("expected empty key for missing file, got %s", cfg.Transcribe.Deepgram.APIKey)
+	}
+}
+
 func TestResolveOutputDir(t *testing.T) {
 	home, _ := os.UserHomeDir()
 	cfg := Default()
