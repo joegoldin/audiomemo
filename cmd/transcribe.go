@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
@@ -30,6 +31,7 @@ var (
 	tPunctuate   bool
 	tFillerWords bool
 	tNumerals    bool
+	tQuiet       bool
 )
 
 var transcribeCmd = &cobra.Command{
@@ -63,6 +65,7 @@ func init() {
 	transcribeCmd.PersistentFlags().BoolVar(&tPunctuate, "punctuate", false, "add punctuation (Deepgram)")
 	transcribeCmd.PersistentFlags().BoolVar(&tFillerWords, "filler-words", false, "include filler words (Deepgram)")
 	transcribeCmd.PersistentFlags().BoolVar(&tNumerals, "numerals", false, "convert numbers to numerals (Deepgram)")
+	transcribeCmd.PersistentFlags().BoolVarP(&tQuiet, "quiet", "q", false, "save transcript to file without printing to stdout")
 }
 
 func ExecuteTranscribe() {
@@ -194,11 +197,21 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 
 	output := result.Format(opts.Format)
 
+	// Auto-save transcript alongside the audio file.
+	if audioPath != "" && audioPath != "-" {
+		transcriptPath := transcriptPathFor(audioPath, opts.Format)
+		if err := os.WriteFile(transcriptPath, []byte(output), 0644); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to save transcript to %s: %v\n", transcriptPath, err)
+		} else if tVerbose {
+			fmt.Fprintf(os.Stderr, "Saved transcript to %s\n", transcriptPath)
+		}
+	}
+
 	if tOutput != "" {
 		if err := os.WriteFile(tOutput, []byte(output), 0644); err != nil {
 			return err
 		}
-	} else {
+	} else if !tQuiet {
 		fmt.Println(output)
 	}
 
@@ -228,6 +241,22 @@ func copyToClipboard(text string) error {
 	}
 	cmd.Stdin = strings.NewReader(text)
 	return cmd.Run()
+}
+
+// transcriptPathFor returns the path for a transcript file alongside the audio
+// file, using the appropriate extension for the output format.
+func transcriptPathFor(audioPath string, format transcribe.OutputFormat) string {
+	ext := ".txt"
+	switch format {
+	case transcribe.FormatJSON:
+		ext = ".json"
+	case transcribe.FormatSRT:
+		ext = ".srt"
+	case transcribe.FormatVTT:
+		ext = ".vtt"
+	}
+	base := strings.TrimSuffix(audioPath, filepath.Ext(audioPath))
+	return base + ext
 }
 
 func bufferStdin() (string, error) {
