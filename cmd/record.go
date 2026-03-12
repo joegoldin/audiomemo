@@ -31,12 +31,13 @@ var (
 )
 
 var recordCmd = &cobra.Command{
-	Use:     "record [flags] [name]",
+	Use:     "record [flags] [name ...]",
 	Aliases: []string{"rec"},
 	Short:   "Record audio from microphone",
 	Long: `Record audio from your microphone with a live TUI showing VU meter and animation.
 
-An optional name can be passed as a positional argument to label the recording.
+An optional name can be passed as positional arguments to label the recording.
+Multiple words are joined with underscores.
 
 Examples:
   record
@@ -44,7 +45,7 @@ Examples:
   rec standup -t
   record -d 5m --no-tui
   record -D "Built-in Microphone" -t --transcribe-args="--backend deepgram"`,
-	Args: cobra.MaximumNArgs(1),
+	Args: cobra.ArbitraryArgs,
 	RunE: runRecord,
 }
 
@@ -165,10 +166,10 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if err := record.EnsureOutputDir(outputDir); err != nil {
 		return fmt.Errorf("failed to create output dir: %w", err)
 	}
-	// Positional arg takes priority, then -n flag.
+	// Positional args take priority, then -n flag. Multiple words joined with _.
 	name := rName
-	if len(args) > 0 && args[0] != "" {
-		name = args[0]
+	if len(args) > 0 {
+		name = strings.Join(args, "_")
 	}
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
 

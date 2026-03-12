@@ -739,7 +739,7 @@ func TestRecordHelpShowsPositionalName(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record --help failed: %v", err)
 	}
-	if !strings.Contains(stdout, "[name]") {
-		t.Error("help should show optional [name] argument")
+	if !strings.Contains(stdout, "[name ...]") {
+		t.Error("help should show optional [name ...] argument")
 	}
 }

@@ -96,6 +96,23 @@ func TestGenerateFilename(t *testing.T) {
 	}
 }
 
+func TestGenerateFilenameWithLabel(t *testing.T) {
+	name := GenerateFilename("ogg", "my_cool_meeting")
+	if !strings.HasPrefix(name, "my_cool_meeting-") {
+		t.Errorf("expected prefix my_cool_meeting-, got %s", name)
+	}
+	if !strings.HasSuffix(name, ".ogg") {
+		t.Errorf("expected .ogg suffix, got %s", name)
+	}
+}
+
+func TestGenerateFilenameWithoutLabel(t *testing.T) {
+	name := GenerateFilename("ogg", "")
+	if !strings.HasPrefix(name, "recording-") {
+		t.Errorf("expected prefix recording-, got %s", name)
+	}
+}
+
 // containsArg returns true if args contains the given value.
 func containsArg(args []string, val string) bool {
 	for _, a := range args {
