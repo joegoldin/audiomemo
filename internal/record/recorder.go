@@ -10,7 +10,6 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 )
 
@@ -30,9 +29,10 @@ type Recorder struct {
 	stderr io.ReadCloser
 	Level  chan float64
 	Done   chan error
-	done   chan struct{} // closed when ffmpeg exits; safe for multiple waiters
-	exitErr error
-	paused  bool
+	done           chan struct{} // closed when ffmpeg exits; safe for multiple waiters
+	exitErr        error
+	muted          bool
+	sourceOutputID int
 }
 
 func InputFormat() string {
@@ -186,18 +186,20 @@ func Start(opts RecordOpts) (*Recorder, error) {
 	}
 
 	r := &Recorder{
-		cmd:    cmd,
-		stdin:  stdin,
-		stderr: stderr,
-		Level:  make(chan float64, 10),
-		Done:   make(chan error, 1),
-		done:   make(chan struct{}),
+		cmd:            cmd,
+		stdin:          stdin,
+		stderr:         stderr,
+		Level:          make(chan float64, 10),
+		Done:           make(chan error, 1),
+		done:           make(chan struct{}),
+		sourceOutputID: -1,
 	}
 
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
 	}
 
+	go r.discoverSourceOutput()
 	go r.parseStderr()
 	go func() {
 		r.exitErr = cmd.Wait()
@@ -224,26 +226,40 @@ func (r *Recorder) parseStderr() {
 	}
 }
 
-// Pause toggles pause/resume using SIGSTOP/SIGCONT so ffmpeg's stdin
-// command parser is never put into an unexpected state.
-func (r *Recorder) Pause() {
+// ToggleMute toggles per-stream mute on the ffmpeg PulseAudio source-output.
+func (r *Recorder) ToggleMute() {
+	r.muted = !r.muted
+	if r.sourceOutputID >= 0 {
+		muteSourceOutput(r.sourceOutputID, r.muted)
+	}
+}
+
+// IsMuted returns whether the recorder is currently muted.
+func (r *Recorder) IsMuted() bool {
+	return r.muted
+}
+
+// discoverSourceOutput finds the PulseAudio source-output for this recorder's
+// ffmpeg process. Called in a goroutine after Start.
+func (r *Recorder) discoverSourceOutput() {
 	if r.cmd.Process == nil {
 		return
 	}
-	if r.paused {
-		r.cmd.Process.Signal(syscall.SIGCONT)
-		r.paused = false
-	} else {
-		r.cmd.Process.Signal(syscall.SIGSTOP)
-		r.paused = true
+	pid := r.cmd.Process.Pid
+	for i := 0; i < 10; i++ {
+		id, err := findSourceOutputByPID(pid)
+		if err == nil {
+			r.sourceOutputID = id
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
 	}
 }
 
 func (r *Recorder) Stop() {
-	// Resume first if paused, otherwise ffmpeg can't process the quit.
-	if r.paused && r.cmd.Process != nil {
-		r.cmd.Process.Signal(syscall.SIGCONT)
-		r.paused = false
+	if r.muted && r.sourceOutputID >= 0 {
+		muteSourceOutput(r.sourceOutputID, false)
+		r.muted = false
 	}
 	r.stdin.Write([]byte("q"))
 	r.stdin.Close()

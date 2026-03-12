@@ -134,11 +134,11 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.state == StateRecording {
 			m.state = StatePaused
 			m.pauseStart = time.Now()
-			m.recorder.Pause()
+			m.recorder.ToggleMute()
 		} else if m.state == StatePaused {
 			m.state = StateRecording
 			m.pauseTotal += time.Since(m.pauseStart)
-			m.recorder.Pause()
+			m.recorder.ToggleMute()
 		}
 		return m, nil
 
