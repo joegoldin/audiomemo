@@ -158,6 +158,16 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// Positional args take priority, then -n flag. Multiple words joined with _.
+	name := rName
+	if len(args) > 0 {
+		name = strings.Join(args, "_")
+	}
+
+	if rClips && name == "" {
+		return fmt.Errorf("clips mode requires a name: record --clips <name>")
+	}
+
 	// Determine output path
 	var outputDir string
 	if rTemp {
@@ -168,16 +178,8 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if err := record.EnsureOutputDir(outputDir); err != nil {
 		return fmt.Errorf("failed to create output dir: %w", err)
 	}
-	// Positional args take priority, then -n flag. Multiple words joined with _.
-	name := rName
-	if len(args) > 0 {
-		name = strings.Join(args, "_")
-	}
 
 	if rClips {
-		if name == "" {
-			return fmt.Errorf("clips mode requires a name: record --clips <name>")
-		}
 		return runClips(name, format, sampleRate, channels, devices, deviceLabel, outputDir)
 	}
 

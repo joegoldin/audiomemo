@@ -537,7 +537,11 @@ func TestRecordClipsFlag(t *testing.T) {
 }
 
 func TestRecordClipsRequiresName(t *testing.T) {
-	_, stderr, err := run(t, "record", "--clips", "--no-tui", "-D", "default")
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, "config.toml")
+	os.WriteFile(configPath, []byte("onboard_version = 1\n"), 0644)
+
+	_, stderr, err := run(t, "record", "--clips", "--no-tui", "-D", "default", "--config", configPath)
 	if err == nil {
 		t.Error("clips mode without name should fail")
 	}
