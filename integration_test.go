@@ -523,6 +523,39 @@ func TestRecordHelp(t *testing.T) {
 	}
 }
 
+func TestRecordClipsFlag(t *testing.T) {
+	stdout, _, err := run(t, "record", "--help")
+	if err != nil {
+		t.Fatalf("record --help failed: %v", err)
+	}
+	if !strings.Contains(stdout, "--clips") {
+		t.Error("help should mention --clips flag")
+	}
+	if !strings.Contains(stdout, "-C") {
+		t.Error("help should mention -C shorthand")
+	}
+}
+
+func TestRecordClipsRequiresName(t *testing.T) {
+	_, stderr, err := run(t, "record", "--clips", "--no-tui", "-D", "default")
+	if err == nil {
+		t.Error("clips mode without name should fail")
+	}
+	if !strings.Contains(stderr, "requires a name") {
+		t.Errorf("error should mention name requirement, got: %s", stderr)
+	}
+}
+
+func TestRecordMultiWordName(t *testing.T) {
+	stdout, _, err := run(t, "record", "--help")
+	if err != nil {
+		t.Fatalf("record --help failed: %v", err)
+	}
+	if !strings.Contains(stdout, "[name ...]") {
+		t.Error("help should show [name ...] for multi-word support")
+	}
+}
+
 func TestRecordListDevices(t *testing.T) {
 	// This may fail on CI without audio devices, but should not crash
 	_, _, err := run(t, "record", "--list-devices")
