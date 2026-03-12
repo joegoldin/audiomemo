@@ -173,6 +173,14 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		name = strings.Join(args, "_")
 	}
+
+	if rClips {
+		if name == "" {
+			return fmt.Errorf("clips mode requires a name: record --clips <name>")
+		}
+		return runClips(name, format, sampleRate, channels, devices, deviceLabel, outputDir)
+	}
+
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
 
 	opts := record.RecordOpts{
@@ -220,6 +228,77 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+func runClips(name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string) error {
+	var savedPaths []string
+	clipNumber := 1
+	savedMessage := ""
+
+	for {
+		outputPath := filepath.Join(outputDir, record.GenerateClipFilename(format, name, clipNumber))
+		opts := record.RecordOpts{
+			Device:      devices[0],
+			Devices:     devices,
+			DeviceLabel: deviceLabel,
+			Format:      format,
+			SampleRate:  sampleRate,
+			Channels:    channels,
+			OutputPath:  outputPath,
+		}
+
+		startRec := func() (*record.Recorder, error) {
+			return record.Start(opts)
+		}
+
+		var model *tui.Model
+		if clipNumber == 1 {
+			// First clip: start recording immediately
+			rec, err := startRec()
+			if err != nil {
+				return err
+			}
+			model = tui.NewClipsModel(nil, rec, opts, clipNumber, "")
+		} else {
+			// Subsequent clips: show ready state, wait for user to start
+			model = tui.NewClipsModel(startRec, nil, opts, clipNumber, savedMessage)
+		}
+
+		p := tea.NewProgram(model, tea.WithAltScreen())
+		if _, err := p.Run(); err != nil {
+			return err
+		}
+
+		rec := model.Recorder()
+		recorded := rec != nil
+
+		if recorded {
+			if err := rec.Wait(); err != nil {
+				fmt.Fprintf(os.Stderr, "recording failed: %v\n", err)
+			} else {
+				savedPaths = append(savedPaths, outputPath)
+				fmt.Println(outputPath)
+			}
+		}
+
+		if model.ShouldTranscribe() {
+			for _, path := range savedPaths {
+				if err := runPostTranscribe(path); err != nil {
+					fmt.Fprintf(os.Stderr, "transcribe %s: %v\n", path, err)
+				}
+			}
+			return nil
+		}
+
+		if model.ClipDone() {
+			savedMessage = fmt.Sprintf("Saved clip %d!", clipNumber)
+			clipNumber++
+			continue
+		}
+
+		// ctrl+c or q from ready state — done
+		return nil
+	}
 }
 
 func runPostTranscribe(audioPath string) error {
