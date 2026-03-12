@@ -3,3 +3,7 @@
 /vendor/
 *.test
 result
+testdata/*.txt
+testdata/*.json
+testdata/*.srt
+testdata/*.vtt
