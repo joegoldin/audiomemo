@@ -156,6 +156,13 @@ func GenerateFilename(format, label string) string {
 	return fmt.Sprintf("recording-%s.%s", ts, format)
 }
 
+// GenerateClipFilename generates a filename for a clip with a sequence number.
+// Format: {label}-{NNN}-{timestamp}.{format}
+func GenerateClipFilename(format, label string, clipNumber int) string {
+	ts := time.Now().Format("2006-01-02T15-04-05")
+	return fmt.Sprintf("%s-%03d-%s.%s", label, clipNumber, ts, format)
+}
+
 var rmsPattern = regexp.MustCompile(`lavfi\.astats\.Overall\.RMS_level=(-?[\d.]+|inf|-inf)`)
 
 func Start(opts RecordOpts) (*Recorder, error) {

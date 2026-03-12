@@ -290,6 +290,26 @@ func TestBuildFFmpegArgsMultiEmptyDevices(t *testing.T) {
 	}
 }
 
+func TestGenerateClipFilename(t *testing.T) {
+	name := GenerateClipFilename("ogg", "interview", 3)
+	if !strings.HasPrefix(name, "interview-003-") {
+		t.Errorf("expected prefix interview-003-, got %s", name)
+	}
+	if !strings.HasSuffix(name, ".ogg") {
+		t.Errorf("expected .ogg suffix, got %s", name)
+	}
+}
+
+func TestGenerateClipFilenameFirstClip(t *testing.T) {
+	name := GenerateClipFilename("wav", "session", 1)
+	if !strings.HasPrefix(name, "session-001-") {
+		t.Errorf("expected prefix session-001-, got %s", name)
+	}
+	if !strings.HasSuffix(name, ".wav") {
+		t.Errorf("expected .wav suffix, got %s", name)
+	}
+}
+
 // Ensure the test helpers compile (use fmt and strings).
 var _ = fmt.Sprintf
 var _ = strings.Contains

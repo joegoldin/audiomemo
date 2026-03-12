@@ -28,6 +28,7 @@ var (
 	rNoTUI          bool
 	rVerbose        bool
 	rConfig         string
+	rClips          bool
 )
 
 var recordCmd = &cobra.Command{
@@ -63,6 +64,7 @@ func init() {
 	recordCmd.Flags().BoolVar(&rNoTUI, "no-tui", false, "headless mode")
 	recordCmd.Flags().BoolVarP(&rVerbose, "verbose", "v", false, "verbose output (passed to transcribe)")
 	recordCmd.Flags().StringVar(&rConfig, "config", "", "config file path")
+	recordCmd.Flags().BoolVarP(&rClips, "clips", "C", false, "clips mode: record multiple clips sequentially")
 }
 
 func ExecuteRecord() {
