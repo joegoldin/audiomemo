@@ -14,7 +14,6 @@ type State int
 
 const (
 	StateRecording State = iota
-	StatePaused
 	StateSaved
 )
 
@@ -24,12 +23,11 @@ type Model struct {
 	opts       record.RecordOpts
 	startTime  time.Time
 	elapsed    time.Duration
-	pauseStart time.Time
-	pauseTotal time.Duration
 	level      float64
 	tick       int
 	anim       *Animation
 	transcribe bool // set when user presses Q to quit-and-transcribe
+	muted      bool
 	err        error
 	width      int
 	height     int
@@ -93,7 +91,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tickMsg:
 		if m.state == StateRecording {
-			m.elapsed = time.Since(m.startTime) - m.pauseTotal
+			m.elapsed = time.Since(m.startTime)
 			m.tick++
 		}
 		return m, tickCmd()
@@ -130,15 +128,10 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.transcribe = true
 		return m, tea.Quit
 
-	case key.Matches(msg, key.NewBinding(key.WithKeys("p", " "))):
+	case key.Matches(msg, key.NewBinding(key.WithKeys("m"))):
 		if m.state == StateRecording {
-			m.state = StatePaused
-			m.pauseStart = time.Now()
 			m.recorder.ToggleMute()
-		} else if m.state == StatePaused {
-			m.state = StateRecording
-			m.pauseTotal += time.Since(m.pauseStart)
-			m.recorder.ToggleMute()
+			m.muted = m.recorder.IsMuted()
 		}
 		return m, nil
 
@@ -157,13 +150,13 @@ var (
 func (m *Model) View() string {
 	// Status line
 	var status string
-	switch m.state {
-	case StateRecording:
-		status = recStyle.Render("● REC")
-	case StatePaused:
-		status = pauseStyle.Render("⏸ PAUSED")
-	case StateSaved:
+	switch {
+	case m.state == StateSaved:
 		status = savedStyle.Render("✓ SAVED")
+	case m.muted:
+		status = pauseStyle.Render("🔇 MUTED")
+	default:
+		status = recStyle.Render("● REC")
 	}
 
 	dur := formatDuration(m.elapsed)
@@ -171,7 +164,7 @@ func (m *Model) View() string {
 	header := fmt.Sprintf("  %s  %s       %s", status, dur, dimStyle.Render(info))
 
 	// Waveform (unified VU + scrolling history)
-	paused := m.state != StateRecording
+	paused := m.muted
 	animLevel := dbToLevel(m.level)
 	animView := m.anim.Render(m.tick, animLevel, paused)
 
@@ -188,7 +181,7 @@ func (m *Model) View() string {
 	outLine := infoStyle.Render(fmt.Sprintf("  out: %s", m.opts.OutputPath))
 
 	// Keys
-	keys := dimStyle.Render("  [p]ause  [q]uit  [Q]uit+transcribe")
+	keys := dimStyle.Render("  [m]ute  [q]uit  [Q]uit+transcribe")
 
 	return lipgloss.JoinVertical(lipgloss.Left,
 		header, "", center, "", micLine, outLine, "", keys,
