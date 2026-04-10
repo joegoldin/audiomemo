@@ -21,18 +21,20 @@ type RecordOpts struct {
 	SampleRate  int
 	Channels    int
 	OutputPath  string
+	LivePCM     bool
 }
 
 type Recorder struct {
-	cmd    *exec.Cmd
-	stdin  io.WriteCloser
-	stderr io.ReadCloser
-	Level  chan float64
-	Done   chan error
+	cmd            *exec.Cmd
+	stdin          io.WriteCloser
+	stderr         io.ReadCloser
+	Level          chan float64
+	Done           chan error
 	done           chan struct{} // closed when ffmpeg exits; safe for multiple waiters
 	exitErr        error
 	muted          bool
 	sourceOutputID int
+	PCMReader      io.ReadCloser
 }
 
 func InputFormat() string {
@@ -165,6 +167,13 @@ func GenerateClipFilename(format, label string, clipNumber int) string {
 
 var rmsPattern = regexp.MustCompile(`lavfi\.astats\.Overall\.RMS_level=(-?[\d.]+|inf|-inf)`)
 
+// appendPCMPipeArgs appends ffmpeg output args that write a raw PCM stream to
+// the given file descriptor. The stream is signed 16-bit little-endian, mono,
+// 16 kHz — suitable for live speech transcription.
+func appendPCMPipeArgs(args []string, pipeFd int) []string {
+	return append(args, "-f", "s16le", "-ar", "16000", "-ac", "1", fmt.Sprintf("pipe:%d", pipeFd))
+}
+
 func Start(opts RecordOpts) (*Recorder, error) {
 	var args []string
 	if len(opts.Devices) > 1 {
@@ -180,15 +189,43 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		}
 		args = BuildFFmpegArgs(opts)
 	}
+	var pcmReadEnd *os.File
+	var pcmWriteEnd *os.File
+	if opts.LivePCM {
+		var err error
+		pcmReadEnd, pcmWriteEnd, err = os.Pipe()
+		if err != nil {
+			return nil, fmt.Errorf("failed to create PCM pipe: %w", err)
+		}
+		// ExtraFiles[0] becomes fd 3 in the child process.
+		args = appendPCMPipeArgs(args, 3)
+	}
+
 	cmd := exec.Command("ffmpeg", args...)
+
+	if opts.LivePCM {
+		cmd.ExtraFiles = []*os.File{pcmWriteEnd}
+	}
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
+		if pcmReadEnd != nil {
+			pcmReadEnd.Close()
+		}
+		if pcmWriteEnd != nil {
+			pcmWriteEnd.Close()
+		}
 		return nil, err
 	}
 
 	stderr, err := cmd.StderrPipe()
 	if err != nil {
+		if pcmReadEnd != nil {
+			pcmReadEnd.Close()
+		}
+		if pcmWriteEnd != nil {
+			pcmWriteEnd.Close()
+		}
 		return nil, err
 	}
 
@@ -203,7 +240,19 @@ func Start(opts RecordOpts) (*Recorder, error) {
 	}
 
 	if err := cmd.Start(); err != nil {
+		if pcmReadEnd != nil {
+			pcmReadEnd.Close()
+		}
+		if pcmWriteEnd != nil {
+			pcmWriteEnd.Close()
+		}
 		return nil, fmt.Errorf("failed to start ffmpeg: %w", err)
+	}
+
+	if opts.LivePCM {
+		// Close the write end in the parent; ffmpeg inherited it.
+		pcmWriteEnd.Close()
+		r.PCMReader = pcmReadEnd
 	}
 
 	go r.discoverSourceOutput()

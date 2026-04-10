@@ -310,6 +310,42 @@ func TestGenerateClipFilenameFirstClip(t *testing.T) {
 	}
 }
 
+func TestAppendPCMPipeArgs(t *testing.T) {
+	base := []string{"-f", "pulse", "-i", "default"}
+	result := appendPCMPipeArgs(base, 3)
+
+	// Original args should be unchanged (result is a new slice).
+	if len(base) != 4 {
+		t.Errorf("base slice should not be modified, got len %d", len(base))
+	}
+
+	// Appended args: -f s16le -ar 16000 -ac 1 pipe:3
+	expected := []string{"-f", "pulse", "-i", "default", "-f", "s16le", "-ar", "16000", "-ac", "1", "pipe:3"}
+	if len(result) != len(expected) {
+		t.Fatalf("expected %d args, got %d: %v", len(expected), len(result), result)
+	}
+	for i, v := range expected {
+		if result[i] != v {
+			t.Errorf("arg[%d]: expected %q, got %q", i, v, result[i])
+		}
+	}
+
+	// Also verify with a different fd number.
+	result5 := appendPCMPipeArgs([]string{}, 5)
+	if !containsArg(result5, "pipe:5") {
+		t.Errorf("expected pipe:5 in args, got %v", result5)
+	}
+	if argAfter(result5, "-f") != "s16le" {
+		t.Errorf("expected -f s16le, got -f %s", argAfter(result5, "-f"))
+	}
+	if argAfter(result5, "-ar") != "16000" {
+		t.Errorf("expected -ar 16000, got -ar %s", argAfter(result5, "-ar"))
+	}
+	if argAfter(result5, "-ac") != "1" {
+		t.Errorf("expected -ac 1, got -ac %s", argAfter(result5, "-ac"))
+	}
+}
+
 // Ensure the test helpers compile (use fmt and strings).
 var _ = fmt.Sprintf
 var _ = strings.Contains
