@@ -17,7 +17,10 @@ func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, err
 		return newBackend(cfg, backend)
 	}
 
-	// Auto-detect: scan for configured API keys
+	// Auto-detect: scan for configured API keys (elevenlabs preferred)
+	if cfg.Transcribe.ElevenLabs.APIKey != "" {
+		return NewElevenLabs(cfg.Transcribe.ElevenLabs.APIKey, cfg.Transcribe.ElevenLabs.Model, cfg.Transcribe.ElevenLabs.StoreInCloud), nil
+	}
 	if cfg.Transcribe.Deepgram.APIKey != "" {
 		return NewDeepgram(cfg.Transcribe.Deepgram.APIKey, cfg.Transcribe.Deepgram.Model), nil
 	}
@@ -34,7 +37,7 @@ func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, err
 		return w, nil
 	}
 
-	return nil, fmt.Errorf("no transcription backend available. Set an API key (DEEPGRAM_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY) or install whisper locally")
+	return nil, fmt.Errorf("no transcription backend available. Set an API key (ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY) or install whisper locally")
 }
 
 func newBackend(cfg *config.Config, name string) (Transcriber, error) {
@@ -68,6 +71,11 @@ func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 			binary = b
 		}
 		return &Whisper{binary: binary, variant: variantFFmpegWhisper, defaultModel: cfg.Transcribe.Whisper.Model, hfToken: hfToken}, nil
+	case "elevenlabs":
+		if cfg.Transcribe.ElevenLabs.APIKey == "" {
+			return nil, fmt.Errorf("elevenlabs API key not configured")
+		}
+		return NewElevenLabs(cfg.Transcribe.ElevenLabs.APIKey, cfg.Transcribe.ElevenLabs.Model, cfg.Transcribe.ElevenLabs.StoreInCloud), nil
 	case "deepgram":
 		if cfg.Transcribe.Deepgram.APIKey == "" {
 			return nil, fmt.Errorf("deepgram API key not configured")
@@ -84,6 +92,6 @@ func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 		}
 		return NewMistral(cfg.Transcribe.Mistral.APIKey, cfg.Transcribe.Mistral.Model), nil
 	default:
-		return nil, fmt.Errorf("unknown backend: %s (available: whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)", name)
+		return nil, fmt.Errorf("unknown backend: %s (available: elevenlabs, whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)", name)
 	}
 }

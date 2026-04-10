@@ -31,7 +31,8 @@ var (
 	tPunctuate   bool
 	tFillerWords bool
 	tNumerals    bool
-	tQuiet       bool
+	tQuiet        bool
+	tStoreInCloud bool
 )
 
 var transcribeCmd = &cobra.Command{
@@ -39,10 +40,11 @@ var transcribeCmd = &cobra.Command{
 	Short: "Transcribe audio to text",
 	Long: `Transcribe audio files using local whisper or cloud APIs (Deepgram, OpenAI, Mistral).
 
-By default, auto-detects the best available backend. Use --backend to force a specific one.
+By default, auto-detects the best available backend (ElevenLabs preferred). Use --backend to force a specific one.
 
 Examples:
   transcribe recording.ogg
+  transcribe -b elevenlabs -f srt interview.wav
   transcribe -b deepgram -f srt interview.wav
   transcribe -b whisper -l en lecture.mp3
   cat audio.ogg | transcribe -`,
@@ -52,7 +54,7 @@ Examples:
 
 func init() {
 	transcribeCmd.AddCommand(transcribeLatestCmd)
-	transcribeCmd.PersistentFlags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
+	transcribeCmd.PersistentFlags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (elevenlabs, whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
 	transcribeCmd.PersistentFlags().StringVarP(&tModel, "model", "m", "", "model name (backend-specific)")
 	transcribeCmd.PersistentFlags().StringVarP(&tLanguage, "language", "l", "", "language hint (ISO 639-1)")
 	transcribeCmd.PersistentFlags().StringVarP(&tOutput, "output", "o", "", "output file (default: stdout)")
@@ -66,6 +68,7 @@ func init() {
 	transcribeCmd.PersistentFlags().BoolVar(&tFillerWords, "filler-words", false, "include filler words (Deepgram)")
 	transcribeCmd.PersistentFlags().BoolVar(&tNumerals, "numerals", false, "convert numbers to numerals (Deepgram)")
 	transcribeCmd.PersistentFlags().BoolVarP(&tQuiet, "quiet", "q", false, "save transcript to file without printing to stdout")
+	transcribeCmd.PersistentFlags().BoolVar(&tStoreInCloud, "store-in-cloud", false, "keep transcript stored in cloud provider (ElevenLabs)")
 }
 
 func ExecuteTranscribe() {
@@ -103,6 +106,11 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		audioPath = tmp
 	}
 
+	// Apply --store-in-cloud override before creating backend.
+	if cmd.Flags().Changed("store-in-cloud") {
+		cfg.Transcribe.ElevenLabs.StoreInCloud = tStoreInCloud
+	}
+
 	backend, err := transcribe.NewDispatcher(cfg, tBackend)
 	if err != nil {
 		return err
@@ -117,6 +125,8 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 
 	if !cmd.Flags().Changed("diarize") {
 		switch backend.Name() {
+		case "elevenlabs":
+			diarize = cfg.Transcribe.ElevenLabs.Diarize
 		case "deepgram":
 			diarize = cfg.Transcribe.Deepgram.Diarize
 		case "whisperx":

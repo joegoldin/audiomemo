@@ -8,7 +8,7 @@ output_dir = "~/Recordings"
 # device = "Built-in Microphone"
 
 [transcribe]
-# default_backend = "deepgram"
+# default_backend = "elevenlabs"
 # language = "en"
 # output_format = "text"
 
@@ -25,6 +25,13 @@ output_dir = "~/Recordings"
 # punctuate = true
 # filler_words = true
 # numerals = true
+
+[transcribe.elevenlabs]
+# api_key = ""
+# api_key_file = "/run/agenix/elevenlabs_api_key"
+# model = "scribe_v2"
+# diarize = true
+# store_in_cloud = false
 
 [transcribe.openai]
 # api_key = ""

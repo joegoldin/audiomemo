@@ -23,7 +23,7 @@ audiomemo - record audio and transcribe it
 ## DESCRIPTION
 
 CLI for recording audio from PulseAudio/AVFoundation devices and
-transcribing via local whisper or cloud APIs (Deepgram, OpenAI, Mistral).
+transcribing via local whisper or cloud APIs (ElevenLabs, Deepgram, OpenAI, Mistral).
 
 The binary dispatches on `argv[0]`: symlinks named `record`, `rec`, or
 `transcribe` invoke those subcommands directly.
@@ -60,8 +60,8 @@ TUI keybindings during recording:
 Transcribe an audio file. Reads from stdin when file is `-`.
 Auto-detects the best available backend if `--backend` is not set.
 
-    -b, --backend string    whisper, whisper-cpp, whisperx, ffmpeg-whisper,
-                            deepgram, openai, mistral
+    -b, --backend string    elevenlabs, whisper, whisper-cpp, whisperx,
+                            ffmpeg-whisper, deepgram, openai, mistral
     -m, --model string      model name (backend-specific)
     -l, --language string   language hint (ISO 639-1)
     -f, --format string     output format: text, json, srt, vtt (default: text)
@@ -71,6 +71,7 @@ Auto-detects the best available backend if `--backend` is not set.
         --diarize           enable speaker diarization
         --smart-format      smart formatting (Deepgram)
         --punctuate         add punctuation (Deepgram)
+        --store-in-cloud    keep transcript in cloud provider (default: false)
         --config string     config file path
 
 ### device
@@ -107,9 +108,16 @@ desktop = "alsa_output.pci-0000_0c_00.1.hdmi-stereo.monitor"
 zoom = ["mic", "desktop"]
 
 [transcribe]
-default_backend = "deepgram"
+default_backend = "elevenlabs"
 language = "en"
 output_format = "text"
+
+[transcribe.elevenlabs]
+api_key = ""
+api_key_file = "/run/agenix/elevenlabs_api_key"
+model = "scribe_v2"
+diarize = true
+store_in_cloud = false        # delete transcript from cloud after fetching
 
 [transcribe.whisper]
 model = "base"
@@ -133,10 +141,15 @@ model = "voxtral-mini-latest"
 
 ## ENVIRONMENT
 
-    DEEPGRAM_API_KEY    Deepgram API key (overrides config)
-    OPENAI_API_KEY      OpenAI API key (overrides config)
-    MISTRAL_API_KEY     Mistral API key (overrides config)
-    HF_TOKEN            HuggingFace token for whisper model downloads
+    ELEVENLABS_API_KEY       ElevenLabs API key (overrides config)
+    ELEVENLABS_API_KEY_FILE  path to file containing ElevenLabs API key
+    DEEPGRAM_API_KEY         Deepgram API key (overrides config)
+    OPENAI_API_KEY           OpenAI API key (overrides config)
+    MISTRAL_API_KEY          Mistral API key (overrides config)
+    HF_TOKEN                 HuggingFace token for whisper model downloads
+
+All `*_API_KEY` vars also support `*_API_KEY_FILE` variants that read
+the key from a file at the given path (useful for secrets managers).
 
 ## DEVICE RESOLUTION
 
@@ -192,14 +205,17 @@ The nix package wraps the binary with ffmpeg and whisper-cpp in PATH.
     # Record specific device, 5 minute limit, headless
     record -D mic -d 5m --no-tui
 
-    # Record group (multi-device), transcribe with Deepgram
-    record -D zoom -t --transcribe-args="--backend deepgram"
+    # Record group (multi-device), transcribe with ElevenLabs
+    record -D zoom -t
 
     # Transcribe existing file
     transcribe recording.ogg
 
     # Transcribe with diarization, SRT output
-    transcribe -b deepgram --diarize -f srt interview.wav
+    transcribe --diarize -f srt interview.wav
+
+    # Transcribe with a specific backend
+    transcribe -b deepgram -f srt interview.wav
 
     # Pipe audio from stdin
     cat audio.ogg | transcribe -

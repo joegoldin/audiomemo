@@ -35,11 +35,11 @@ in
             output_dir = "~/Recordings";
           };
           transcribe = {
-            default_backend = "deepgram";
-            deepgram = {
-              api_key_file = config.age.secrets.deepgram_api_key.path;
-              model = "nova-3";
-              smart_format = true;
+            default_backend = "elevenlabs";
+            elevenlabs = {
+              api_key_file = config.age.secrets.elevenlabs_api_key.path;
+              model = "scribe_v2";
+              diarize = true;
             };
           };
         }

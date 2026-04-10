@@ -32,13 +32,14 @@ type RecordConfig struct {
 }
 
 type TranscribeConfig struct {
-	DefaultBackend string         `toml:"default_backend"`
-	Language       string         `toml:"language"`
-	OutputFormat   string         `toml:"output_format"`
-	Whisper        WhisperConfig  `toml:"whisper"`
-	Deepgram       DeepgramConfig `toml:"deepgram"`
-	OpenAI         OpenAIConfig   `toml:"openai"`
-	Mistral        MistralConfig  `toml:"mistral"`
+	DefaultBackend string           `toml:"default_backend"`
+	Language       string           `toml:"language"`
+	OutputFormat   string           `toml:"output_format"`
+	Whisper        WhisperConfig    `toml:"whisper"`
+	Deepgram       DeepgramConfig   `toml:"deepgram"`
+	OpenAI         OpenAIConfig     `toml:"openai"`
+	Mistral        MistralConfig    `toml:"mistral"`
+	ElevenLabs     ElevenLabsConfig `toml:"elevenlabs"`
 }
 
 type WhisperConfig struct {
@@ -72,6 +73,14 @@ type MistralConfig struct {
 	Model      string `toml:"model"`
 }
 
+type ElevenLabsConfig struct {
+	APIKey       string `toml:"api_key"`
+	APIKeyFile   string `toml:"api_key_file"`
+	Model        string `toml:"model"`
+	Diarize      bool   `toml:"diarize"`
+	StoreInCloud bool   `toml:"store_in_cloud"`
+}
+
 func Default() *Config {
 	return &Config{
 		Record: RecordConfig{
@@ -88,6 +97,7 @@ func Default() *Config {
 			Deepgram:     DeepgramConfig{Model: "nova-3", SmartFormat: true, Diarize: true, Punctuate: true, FillerWords: true, Numerals: true},
 			OpenAI:       OpenAIConfig{Model: "gpt-4o-transcribe"},
 			Mistral:      MistralConfig{Model: "voxtral-mini-latest"},
+			ElevenLabs:   ElevenLabsConfig{Model: "scribe_v2", Diarize: true},
 		},
 	}
 }
@@ -130,6 +140,9 @@ func (c *Config) ApplyEnv() {
 	if v := os.Getenv("MISTRAL_API_KEY"); v != "" {
 		c.Transcribe.Mistral.APIKey = v
 	}
+	if v := os.Getenv("ELEVENLABS_API_KEY"); v != "" {
+		c.Transcribe.ElevenLabs.APIKey = v
+	}
 	if v := os.Getenv("HF_TOKEN"); v != "" && c.Transcribe.Whisper.HFToken == "" {
 		c.Transcribe.Whisper.HFToken = v
 	}
@@ -150,6 +163,11 @@ func (c *Config) ApplyEnv() {
 			c.Transcribe.Mistral.APIKey = readKeyFile(v)
 		}
 	}
+	if c.Transcribe.ElevenLabs.APIKey == "" {
+		if v := os.Getenv("ELEVENLABS_API_KEY_FILE"); v != "" {
+			c.Transcribe.ElevenLabs.APIKey = readKeyFile(v)
+		}
+	}
 	if c.Transcribe.Whisper.HFToken == "" {
 		if v := os.Getenv("HF_TOKEN_FILE"); v != "" {
 			c.Transcribe.Whisper.HFToken = readKeyFile(v)
@@ -165,6 +183,9 @@ func (c *Config) ApplyEnv() {
 	}
 	if c.Transcribe.Mistral.APIKey == "" && c.Transcribe.Mistral.APIKeyFile != "" {
 		c.Transcribe.Mistral.APIKey = readKeyFile(c.Transcribe.Mistral.APIKeyFile)
+	}
+	if c.Transcribe.ElevenLabs.APIKey == "" && c.Transcribe.ElevenLabs.APIKeyFile != "" {
+		c.Transcribe.ElevenLabs.APIKey = readKeyFile(c.Transcribe.ElevenLabs.APIKeyFile)
 	}
 	if c.Transcribe.Whisper.HFToken == "" && c.Transcribe.Whisper.HFTokenFile != "" {
 		c.Transcribe.Whisper.HFToken = readKeyFile(c.Transcribe.Whisper.HFTokenFile)
