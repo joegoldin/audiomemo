@@ -2,12 +2,14 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/charmbracelet/bubbles/key"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/joegoldin/audiomemo/internal/record"
+	"github.com/joegoldin/audiomemo/internal/transcribe"
 )
 
 type State int
@@ -37,9 +39,13 @@ type Model struct {
 	clipNumber   int
 	savedMessage string // e.g. "Saved clip 3!"
 	startFunc    StartFunc
-	err          error
-	width        int
-	height       int
+	err               error
+	width             int
+	height            int
+	streamer          *transcribe.Streamer
+	transcript        TranscriptViewport
+	liveTranscription bool
+	streamErr         error
 }
 
 // ShouldTranscribe returns true if the user pressed Q to quit-and-transcribe.
@@ -57,9 +63,17 @@ func (m *Model) Recorder() *record.Recorder {
 	return m.recorder
 }
 
+// StreamErr returns any error from the live transcription stream.
+func (m *Model) StreamErr() error {
+	return m.streamErr
+}
+
 type tickMsg time.Time
 type levelMsg float64
 type doneMsg error
+type committedMsg string
+type partialMsg string
+type streamErrMsg error
 
 func NewModel(rec *record.Recorder, opts record.RecordOpts) *Model {
 	return &Model{
@@ -68,6 +82,19 @@ func NewModel(rec *record.Recorder, opts record.RecordOpts) *Model {
 		opts:      opts,
 		startTime: time.Now(),
 		anim:      NewAnimation(60, 9),
+	}
+}
+
+func NewModelWithStreamer(rec *record.Recorder, opts record.RecordOpts, streamer *transcribe.Streamer) *Model {
+	return &Model{
+		state:             StateRecording,
+		recorder:          rec,
+		opts:              opts,
+		startTime:         time.Now(),
+		anim:              NewAnimation(60, 5),
+		streamer:          streamer,
+		transcript:        NewTranscriptViewport(60, 10),
+		liveTranscription: true,
 	}
 }
 
@@ -92,10 +119,17 @@ func NewClipsModel(startFunc StartFunc, rec *record.Recorder, opts record.Record
 }
 
 func (m *Model) Init() tea.Cmd {
-	if m.state == StateReady {
-		return tickCmd() // tick for UI updates, but no recording yet
+	cmds := []tea.Cmd{tickCmd()}
+	if m.state == StateRecording {
+		cmds = append(cmds, listenLevel(m.recorder), listenDone(m.recorder))
 	}
-	return tea.Batch(tickCmd(), listenLevel(m.recorder), listenDone(m.recorder))
+	if m.liveTranscription && m.streamer != nil {
+		cmds = append(cmds, listenCommitted(m.streamer), listenPartial(m.streamer), listenStreamErr(m.streamer))
+	}
+	if m.state == StateReady {
+		return cmds[0] // just tickCmd for ready state
+	}
+	return tea.Batch(cmds...)
 }
 
 func tickCmd() tea.Cmd {
@@ -121,11 +155,48 @@ func listenDone(rec *record.Recorder) tea.Cmd {
 	}
 }
 
+func listenCommitted(s *transcribe.Streamer) tea.Cmd {
+	return func() tea.Msg {
+		text, ok := <-s.Committed
+		if !ok {
+			return nil
+		}
+		return committedMsg(text)
+	}
+}
+
+func listenPartial(s *transcribe.Streamer) tea.Cmd {
+	return func() tea.Msg {
+		text, ok := <-s.Partial
+		if !ok {
+			return nil
+		}
+		return partialMsg(text)
+	}
+}
+
+func listenStreamErr(s *transcribe.Streamer) tea.Cmd {
+	return func() tea.Msg {
+		err, ok := <-s.Err
+		if !ok {
+			return nil
+		}
+		return streamErrMsg(err)
+	}
+}
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
+		if m.liveTranscription {
+			viewportHeight := msg.Height - 13
+			if viewportHeight < 4 {
+				viewportHeight = 4
+			}
+			m.transcript.SetSize(msg.Width, viewportHeight)
+		}
 		return m, nil
 
 	case tea.KeyMsg:
@@ -148,11 +219,33 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.err = error(msg)
 		}
 		return m, tea.Quit
+
+	case committedMsg:
+		m.transcript.AppendCommitted(string(msg))
+		return m, listenCommitted(m.streamer)
+
+	case partialMsg:
+		m.transcript.SetPartial(string(msg))
+		return m, listenPartial(m.streamer)
+
+	case streamErrMsg:
+		m.streamErr = error(msg)
+		m.liveTranscription = false
+		return m, nil
 	}
 	return m, nil
 }
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	var cmd tea.Cmd
+	if m.liveTranscription {
+		switch msg.String() {
+		case "up", "down", "pgup", "pgdown", "end":
+			m.transcript, cmd = m.transcript.Update(msg)
+			return m, cmd
+		}
+	}
+
 	switch {
 	case key.Matches(msg, key.NewBinding(key.WithKeys("ctrl+c"))):
 		if m.state == StateReady {
@@ -273,6 +366,8 @@ func (m *Model) View() string {
 		} else {
 			keys = dimStyle.Render("  [m]ute  [q] save clip  [Q]uit+transcribe")
 		}
+	} else if m.liveTranscription {
+		keys = dimStyle.Render("  [↑↓] scroll  [m]ute  [q]uit  [Q]uit+transcribe")
 	} else {
 		keys = dimStyle.Render("  [m]ute  [q]uit  [Q]uit+transcribe")
 	}
@@ -281,7 +376,14 @@ func (m *Model) View() string {
 	if savedLine != "" {
 		parts = append(parts, savedLine)
 	}
-	parts = append(parts, micLine, outLine, "", keys)
+	parts = append(parts, micLine, outLine)
+
+	if m.liveTranscription {
+		parts = append(parts, dimStyle.Render(strings.Repeat("─", m.width)))
+		parts = append(parts, m.transcript.View())
+	}
+
+	parts = append(parts, "", keys)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -10,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/audiomemo/internal/config"
 	"github.com/joegoldin/audiomemo/internal/record"
+	"github.com/joegoldin/audiomemo/internal/transcribe"
 	"github.com/joegoldin/audiomemo/internal/tui"
 	"github.com/spf13/cobra"
 )
@@ -89,6 +91,8 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if err := maybeOnboard(cfg, rConfig); err != nil {
 		return err
 	}
+
+	cfg.ApplyEnv()
 
 	if rListDevices {
 		devices, err := record.ListDevices()
@@ -185,6 +189,15 @@ func runRecord(cmd *cobra.Command, args []string) error {
 
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
 
+	var streamer *transcribe.Streamer
+	if rTranscribe && cfg.Transcribe.ElevenLabs.APIKey != "" {
+		streamer = transcribe.NewStreamer(
+			cfg.Transcribe.ElevenLabs.APIKey,
+			cfg.Transcribe.ElevenLabs.Model,
+			cfg.Transcribe.ElevenLabs.StoreInCloud,
+		)
+	}
+
 	opts := record.RecordOpts{
 		Device:      devices[0],
 		Devices:     devices,
@@ -193,6 +206,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		SampleRate:  sampleRate,
 		Channels:    channels,
 		OutputPath:  outputPath,
+		LivePCM:     streamer != nil,
 	}
 
 	rec, err := record.Start(opts)
@@ -200,14 +214,27 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if streamer != nil {
+		transcriptPath := transcriptPathFor(outputPath, transcribe.FormatText)
+		if err := streamer.Start(context.Background(), rec.PCMReader, transcriptPath); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: live transcription failed to start: %v\n", err)
+			streamer = nil
+		}
+	}
+
 	shouldTranscribe := rTranscribe
+	var model *tui.Model
 	if rNoTUI {
 		fmt.Fprintf(os.Stderr, "Recording to %s (Ctrl+C to stop)...\n", outputPath)
 		if err := <-rec.Done; err != nil {
 			return err
 		}
 	} else {
-		model := tui.NewModel(rec, opts)
+		if streamer != nil {
+			model = tui.NewModelWithStreamer(rec, opts, streamer)
+		} else {
+			model = tui.NewModel(rec, opts)
+		}
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
 			return err
@@ -221,12 +248,20 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	if streamer != nil {
+		streamer.Stop()
+	}
+
 	// Print just the path to stdout so it can be piped, e.g.:
 	//   transcribe $(record)
 	fmt.Println(outputPath)
 
 	if shouldTranscribe {
-		return runPostTranscribe(outputPath)
+		if streamer != nil && model != nil && model.StreamErr() == nil {
+			// Live transcript already saved - skip batch
+		} else {
+			return runPostTranscribe(outputPath)
+		}
 	}
 
 	return nil
