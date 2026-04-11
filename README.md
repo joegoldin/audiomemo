@@ -42,7 +42,8 @@ When run without `-D`, an interactive device picker is shown first.
     -c, --channels int           1=mono, 2=stereo
     -n, --name string            label for filename
         --temp                   save to temp directory
-    -t, --transcribe             transcribe after recording
+    -t, --transcribe             transcribe after recording (live streaming
+                                 when ElevenLabs is configured)
         --transcribe-args string extra args passed to transcribe
     -v, --verbose                verbose output (passed to transcribe)
     -L, --list-devices           list devices and exit
@@ -54,6 +55,9 @@ TUI keybindings during recording:
     p, space    pause/resume
     q           stop and save
     Q           stop, save, and transcribe
+    ↑/↓         scroll transcript (when live transcribing)
+    pgup/pgdn   page through transcript history
+    end          jump to latest transcript
 
 ### transcribe
 
@@ -160,6 +164,21 @@ When resolving a device name (`-D` flag or `record.device` config):
 3. Use as raw device name
 
 Multi-device recording mixes all inputs via ffmpeg amix.
+
+## LIVE TRANSCRIPTION
+
+When recording with `-t` and an ElevenLabs API key is configured,
+audio is streamed in realtime to ElevenLabs for live speech-to-text.
+The TUI displays a scrollable transcript below the waveform as you speak.
+
+- Text appears as you talk (partial results in gray, committed text in white)
+- Auto-scrolls to show latest text; scroll up to browse history
+- `↓ live` indicator appears when scrolled up
+- Transcript file is saved incrementally (crash-safe)
+- Falls back to batch transcription if streaming fails
+
+If no ElevenLabs key is configured, `-t` uses batch transcription after
+recording stops (existing behavior).
 
 ## INSTALL
 

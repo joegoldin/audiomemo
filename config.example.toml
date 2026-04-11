@@ -31,7 +31,8 @@ output_dir = "~/Recordings"
 # api_key_file = "/run/agenix/elevenlabs_api_key"
 # model = "scribe_v2"
 # diarize = true
-# store_in_cloud = false
+# store_in_cloud = false    # delete transcript from cloud after fetching
+# When configured, `record -t` streams audio for live transcription.
 
 [transcribe.openai]
 # api_key = ""
