@@ -10,7 +10,7 @@
     flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
-        vendorHash = "sha256-IFJmM1jacTeNk9qo1An/FGi/BdjesasSNAXTdj/LBIM=";
+        vendorHash = "sha256-++rCNa9MkMYY5RDkHijb5GFc1Y/zkGMo1UmzdQGpOT8=";
         whisperModel = pkgs.fetchurl {
           url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
           hash = "sha256-YO1bw90U7qhWST0zQ0m0BXgt3K8AKNS130CINF+6Lv4=";
