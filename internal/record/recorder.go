@@ -1,7 +1,7 @@
 package record
 
 import (
-	"bufio"
+	"bytes"
 	"fmt"
 	"io"
 	"os"
@@ -10,8 +10,13 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
+
+// maxStderrTailLines bounds how many non-RMS stderr lines we retain so the
+// recorder can surface them when ffmpeg exits with an error.
+const maxStderrTailLines = 30
 
 type RecordOpts struct {
 	Device      string
@@ -27,7 +32,6 @@ type RecordOpts struct {
 type Recorder struct {
 	cmd            *exec.Cmd
 	stdin          io.WriteCloser
-	stderr         io.ReadCloser
 	Level          chan float64
 	Done           chan error
 	done           chan struct{} // closed when ffmpeg exits; safe for multiple waiters
@@ -35,6 +39,9 @@ type Recorder struct {
 	muted          bool
 	sourceOutputID int
 	PCMReader      io.ReadCloser
+
+	stderrMu   sync.Mutex
+	stderrTail []string
 }
 
 func InputFormat() string {
@@ -218,26 +225,19 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		return nil, err
 	}
 
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		if pcmReadEnd != nil {
-			pcmReadEnd.Close()
-		}
-		if pcmWriteEnd != nil {
-			pcmWriteEnd.Close()
-		}
-		return nil, err
-	}
-
 	r := &Recorder{
 		cmd:            cmd,
 		stdin:          stdin,
-		stderr:         stderr,
 		Level:          make(chan float64, 10),
 		Done:           make(chan error, 1),
 		done:           make(chan struct{}),
 		sourceOutputID: -1,
 	}
+
+	// Using a Writer (rather than StderrPipe + goroutine) lets cmd.Wait()
+	// synchronize with the stderr drain automatically — guaranteeing the
+	// tail buffer is fully populated by the time we read it on exit.
+	cmd.Stderr = &stderrTap{r: r}
 
 	if err := cmd.Start(); err != nil {
 		if pcmReadEnd != nil {
@@ -256,30 +256,76 @@ func Start(opts RecordOpts) (*Recorder, error) {
 	}
 
 	go r.discoverSourceOutput()
-	go r.parseStderr()
 	go func() {
-		r.exitErr = cmd.Wait()
-		r.Done <- r.exitErr
+		exitErr := cmd.Wait()
+		close(r.Level)
+		if exitErr != nil {
+			if tail := r.StderrTail(); tail != "" {
+				exitErr = fmt.Errorf("%w\nffmpeg stderr:\n%s", exitErr, tail)
+			}
+		}
+		r.exitErr = exitErr
+		r.Done <- exitErr
 		close(r.done)
 	}()
 
 	return r, nil
 }
 
-func (r *Recorder) parseStderr() {
-	defer close(r.Level)
-	scanner := bufio.NewScanner(r.stderr)
-	for scanner.Scan() {
-		line := scanner.Text()
-		if m := rmsPattern.FindStringSubmatch(line); len(m) > 1 {
-			if val, err := strconv.ParseFloat(m[1], 64); err == nil {
-				select {
-				case r.Level <- val:
-				default:
-				}
+// stderrTap is an io.Writer attached to ffmpeg's stderr. It splits incoming
+// bytes on newlines and dispatches each line: RMS-level lines feed the VU
+// meter via Recorder.Level; everything else accumulates in a bounded tail
+// buffer so failure context can be returned when ffmpeg exits non-zero.
+type stderrTap struct {
+	r       *Recorder
+	pending []byte // buffer for partial trailing line across Write calls
+}
+
+func (s *stderrTap) Write(p []byte) (int, error) {
+	s.pending = append(s.pending, p...)
+	for {
+		idx := bytes.IndexByte(s.pending, '\n')
+		if idx < 0 {
+			break
+		}
+		line := strings.TrimRight(string(s.pending[:idx]), "\r")
+		s.pending = s.pending[idx+1:]
+		s.handleLine(line)
+	}
+	return len(p), nil
+}
+
+func (s *stderrTap) handleLine(line string) {
+	if m := rmsPattern.FindStringSubmatch(line); len(m) > 1 {
+		if val, err := strconv.ParseFloat(m[1], 64); err == nil {
+			select {
+			case s.r.Level <- val:
+			default:
 			}
 		}
+		return
 	}
+	s.r.appendStderrLine(line)
+}
+
+func (r *Recorder) appendStderrLine(line string) {
+	if strings.TrimSpace(line) == "" {
+		return
+	}
+	r.stderrMu.Lock()
+	defer r.stderrMu.Unlock()
+	r.stderrTail = append(r.stderrTail, line)
+	if len(r.stderrTail) > maxStderrTailLines {
+		r.stderrTail = r.stderrTail[len(r.stderrTail)-maxStderrTailLines:]
+	}
+}
+
+// StderrTail returns the captured non-RMS stderr lines joined by newlines.
+// Useful for diagnosing why ffmpeg exited.
+func (r *Recorder) StderrTail() string {
+	r.stderrMu.Lock()
+	defer r.stderrMu.Unlock()
+	return strings.Join(r.stderrTail, "\n")
 }
 
 // ToggleMute toggles per-stream mute on the ffmpeg PulseAudio source-output.

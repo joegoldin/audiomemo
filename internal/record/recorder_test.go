@@ -2,6 +2,7 @@ package record
 
 import (
 	"fmt"
+	"math"
 	"runtime"
 	"strings"
 	"testing"
@@ -345,6 +346,81 @@ func TestAppendPCMPipeArgs(t *testing.T) {
 		t.Errorf("expected -ac 1, got -ac %s", argAfter(result5, "-ac"))
 	}
 }
+
+func TestStderrTapCapturesRMSAndTail(t *testing.T) {
+	r := &Recorder{Level: make(chan float64, 4)}
+	tap := &stderrTap{r: r}
+
+	// Mix of RMS lines (consumed into Level) and arbitrary lines (kept in tail).
+	chunks := []string{
+		"[avfoundation] some startup banner\n",
+		"frame=  10 ",
+		"fps=30 size=N/A\n",
+		"[Parsed_astats_1 @ 0x123] lavfi.astats.Overall.RMS_level=-12.5\n",
+		"[Parsed_astats_1 @ 0x123] lavfi.astats.Overall.RMS_level=-inf\n",
+		"Audio device not found\n",
+	}
+	for _, c := range chunks {
+		if _, err := tap.Write([]byte(c)); err != nil {
+			t.Fatalf("unexpected write error: %v", err)
+		}
+	}
+
+	close(r.Level)
+	var levels []float64
+	for v := range r.Level {
+		levels = append(levels, v)
+	}
+	if len(levels) != 2 {
+		t.Fatalf("expected 2 RMS levels, got %d: %v", len(levels), levels)
+	}
+	if levels[0] != -12.5 {
+		t.Errorf("expected first RMS -12.5, got %v", levels[0])
+	}
+	if !math.IsInf(levels[1], -1) {
+		t.Errorf("expected second RMS -Inf, got %v", levels[1])
+	}
+
+	tail := r.StderrTail()
+	if !strings.Contains(tail, "Audio device not found") {
+		t.Errorf("tail missing error line:\n%s", tail)
+	}
+	if strings.Contains(tail, "RMS_level=") {
+		t.Errorf("tail should not contain RMS lines:\n%s", tail)
+	}
+	// Split-across-Write line should reassemble correctly.
+	if !strings.Contains(tail, "frame=  10 fps=30 size=N/A") {
+		t.Errorf("split line not reassembled:\n%s", tail)
+	}
+}
+
+func TestStderrTailRingBufferTrims(t *testing.T) {
+	r := &Recorder{Level: make(chan float64, 1)}
+	tap := &stderrTap{r: r}
+
+	for i := 0; i < maxStderrTailLines+10; i++ {
+		fmt.Fprintf(&writeTo{tap}, "line-%03d\n", i)
+	}
+
+	lines := strings.Split(r.StderrTail(), "\n")
+	if len(lines) != maxStderrTailLines {
+		t.Fatalf("expected exactly %d lines, got %d", maxStderrTailLines, len(lines))
+	}
+	// Oldest should have been dropped; the last line is line-039.
+	last := fmt.Sprintf("line-%03d", maxStderrTailLines+10-1)
+	if lines[len(lines)-1] != last {
+		t.Errorf("expected last %q, got %q", last, lines[len(lines)-1])
+	}
+	if lines[0] == "line-000" {
+		t.Errorf("oldest line should have been trimmed, got %q", lines[0])
+	}
+}
+
+// writeTo lets fmt.Fprintf target a stderrTap without exposing its Write
+// method directly through an interface variable in the test body.
+type writeTo struct{ w *stderrTap }
+
+func (w *writeTo) Write(p []byte) (int, error) { return w.w.Write(p) }
 
 // Ensure the test helpers compile (use fmt and strings).
 var _ = fmt.Sprintf
