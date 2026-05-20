@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -348,10 +349,11 @@ func TestStreamerStop(t *testing.T) {
 	}
 }
 
-// TestStreamerErrorHandling verifies that error message types from the server
-// arrive on the Err channel.
+// TestStreamerErrorHandling verifies that fatal error message types from the
+// server arrive on the Err channel. Non-fatal types (error, rate_limited,
+// session_time_limit_exceeded, etc.) are covered separately by reconnect tests.
 func TestStreamerErrorHandling(t *testing.T) {
-	for _, errType := range []string{"error", "auth_error", "quota_exceeded", "rate_limited"} {
+	for _, errType := range []string{"auth_error", "quota_exceeded", "unaccepted_terms", "input_error", "chunk_size_exceeded"} {
 		t.Run(errType, func(t *testing.T) {
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				conn, err := wsUpgrader.Upgrade(w, r, nil)
@@ -432,6 +434,151 @@ func TestStreamerUsesRealtimeModel(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("server did not receive a request")
+	}
+}
+
+// TestStreamerReconnectsAfterDisconnect verifies the streamer dials a new
+// WebSocket session after the server closes the previous one, so transcripts
+// keep flowing past the session_time_limit_exceeded boundary (~1h).
+func TestStreamerReconnectsAfterDisconnect(t *testing.T) {
+	var requestCount int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := atomic.AddInt32(&requestCount, 1)
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		if c == 1 {
+			msg, _ := json.Marshal(map[string]string{"message_type": "committed_transcript", "text": "first"})
+			conn.WriteMessage(websocket.TextMessage, msg)
+			time.Sleep(30 * time.Millisecond)
+			return
+		}
+		msg, _ := json.Marshal(map[string]string{"message_type": "committed_transcript", "text": "second"})
+		conn.WriteMessage(websocket.TextMessage, msg)
+		time.Sleep(2 * time.Second)
+	}))
+	defer server.Close()
+
+	s := newTestStreamer(server)
+	s.reconnectBackoff = 10 * time.Millisecond
+	tmpFile := filepath.Join(t.TempDir(), "transcript.txt")
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	if err := s.Start(t.Context(), pr, tmpFile); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	if text, ok := waitChan(s.Committed, 2*time.Second); !ok || text != "first" {
+		t.Fatalf("expected first, got %q ok=%v", text, ok)
+	}
+	if text, ok := waitChan(s.Committed, 3*time.Second); !ok || text != "second" {
+		t.Fatalf("expected second after reconnect, got %q ok=%v", text, ok)
+	}
+	if got := atomic.LoadInt32(&requestCount); got < 2 {
+		t.Errorf("expected ≥2 connections, got %d", got)
+	}
+}
+
+// TestStreamerReconnectsOnSessionTimeLimit verifies the specific case the
+// 1-hour cutoff produces: session_time_limit_exceeded must trigger reconnect,
+// not surface as a fatal error.
+func TestStreamerReconnectsOnSessionTimeLimit(t *testing.T) {
+	var requestCount int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		c := atomic.AddInt32(&requestCount, 1)
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+
+		if c == 1 {
+			msg, _ := json.Marshal(map[string]string{
+				"message_type": "session_time_limit_exceeded",
+				"error":        "session expired",
+			})
+			conn.WriteMessage(websocket.TextMessage, msg)
+			time.Sleep(30 * time.Millisecond)
+			return
+		}
+		msg, _ := json.Marshal(map[string]string{"message_type": "committed_transcript", "text": "after-timeout"})
+		conn.WriteMessage(websocket.TextMessage, msg)
+		time.Sleep(2 * time.Second)
+	}))
+	defer server.Close()
+
+	s := newTestStreamer(server)
+	s.reconnectBackoff = 10 * time.Millisecond
+	tmpFile := filepath.Join(t.TempDir(), "transcript.txt")
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	if err := s.Start(t.Context(), pr, tmpFile); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	if text, ok := waitChan(s.Committed, 3*time.Second); !ok || text != "after-timeout" {
+		t.Fatalf("expected after-timeout, got %q ok=%v", text, ok)
+	}
+	// Err channel should not fire for session_time_limit_exceeded.
+	select {
+	case e := <-s.Err:
+		if e != nil {
+			t.Errorf("did not expect fatal error for session_time_limit_exceeded, got: %v", e)
+		}
+	case <-time.After(100 * time.Millisecond):
+	}
+}
+
+// TestStreamerNoReconnectOnAuthError verifies fatal errors (bad API key, etc)
+// surface immediately and the streamer doesn't keep retrying.
+func TestStreamerNoReconnectOnAuthError(t *testing.T) {
+	var requestCount int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&requestCount, 1)
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		msg, _ := json.Marshal(map[string]string{
+			"message_type": "auth_error",
+			"error":        "invalid api key",
+		})
+		conn.WriteMessage(websocket.TextMessage, msg)
+		time.Sleep(50 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	s := newTestStreamer(server)
+	s.reconnectBackoff = 10 * time.Millisecond
+	tmpFile := filepath.Join(t.TempDir(), "transcript.txt")
+	pr, pw := io.Pipe()
+	defer pw.Close()
+
+	if err := s.Start(t.Context(), pr, tmpFile); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	defer s.Stop()
+
+	e, ok := waitErr(s.Err, 2*time.Second)
+	if !ok {
+		t.Fatal("expected fatal auth_error on Err channel")
+	}
+	if !strings.Contains(e.Error(), "auth_error") {
+		t.Errorf("expected error to contain auth_error, got: %v", e)
+	}
+
+	// Give time for any erroneous reconnect attempts.
+	time.Sleep(150 * time.Millisecond)
+	if got := atomic.LoadInt32(&requestCount); got != 1 {
+		t.Errorf("expected exactly 1 connection on auth_error, got %d", got)
 	}
 }
 
