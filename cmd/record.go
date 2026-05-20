@@ -3,6 +3,7 @@ package cmd
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -193,7 +194,6 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if rTranscribe && cfg.Transcribe.ElevenLabs.APIKey != "" {
 		streamer = transcribe.NewStreamer(
 			cfg.Transcribe.ElevenLabs.APIKey,
-			cfg.Transcribe.ElevenLabs.Model,
 			cfg.Transcribe.ElevenLabs.StoreInCloud,
 		)
 	}
@@ -219,6 +219,10 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		if err := streamer.Start(context.Background(), rec.PCMReader, transcriptPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: live transcription failed to start: %v\n", err)
 			streamer = nil
+			// ffmpeg was started with the PCM pipe output and nothing else will
+			// read it. Drain it in the background so ffmpeg doesn't block on
+			// pipe writes (which would freeze the primary encoded output too).
+			go io.Copy(io.Discard, rec.PCMReader)
 		}
 	}
 
@@ -257,11 +261,12 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	fmt.Println(outputPath)
 
 	if shouldTranscribe {
-		if streamer != nil && model != nil && model.StreamErr() == nil {
-			// Live transcript already saved - skip batch
-		} else {
-			return runPostTranscribe(outputPath)
-		}
+		// Always run batch after recording. When live streaming worked, the
+		// live transcript on disk is overwritten with the batch result, which
+		// adds features the realtime API lacks (notably diarization). The
+		// transcribe subcommand writes to the same transcriptPathFor() target
+		// the streamer used, so the diarized version replaces the live text.
+		return runPostTranscribe(outputPath)
 	}
 
 	return nil

@@ -135,11 +135,19 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 	for i := 0; i < n; i++ {
 		inputLabels += fmt.Sprintf("[%d:a]", i)
 	}
-	filterComplex := fmt.Sprintf(
-		"%samix=inputs=%d:duration=longest,asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr[a]",
+	// When LivePCM is on, fork the mixed audio with asplit so the PCM pipe
+	// output gets the mix too — not just input 0 (the first mic) which is
+	// what ffmpeg auto-selects for an output without -map.
+	filterGraph := fmt.Sprintf(
+		"%samix=inputs=%d:duration=longest,asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
 		inputLabels, n,
 	)
-	args = append(args, "-filter_complex", filterComplex)
+	if opts.LivePCM {
+		filterGraph += ",asplit=2[a][b]"
+	} else {
+		filterGraph += "[a]"
+	}
+	args = append(args, "-filter_complex", filterGraph)
 	args = append(args, "-map", "[a]")
 
 	args = append(args,
@@ -176,8 +184,13 @@ var rmsPattern = regexp.MustCompile(`lavfi\.astats\.Overall\.RMS_level=(-?[\d.]+
 
 // appendPCMPipeArgs appends ffmpeg output args that write a raw PCM stream to
 // the given file descriptor. The stream is signed 16-bit little-endian, mono,
-// 16 kHz — suitable for live speech transcription.
-func appendPCMPipeArgs(args []string, pipeFd int) []string {
+// 16 kHz — suitable for live speech transcription. If mapLabel is non-empty
+// (e.g. "[b]" from a filter_complex asplit), it is mapped to this output so
+// the pipe receives the mixed audio rather than the default first input.
+func appendPCMPipeArgs(args []string, pipeFd int, mapLabel string) []string {
+	if mapLabel != "" {
+		args = append(args, "-map", mapLabel)
+	}
 	return append(args, "-f", "s16le", "-ar", "16000", "-ac", "1", fmt.Sprintf("pipe:%d", pipeFd))
 }
 
@@ -204,8 +217,14 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create PCM pipe: %w", err)
 		}
-		// ExtraFiles[0] becomes fd 3 in the child process.
-		args = appendPCMPipeArgs(args, 3)
+		// ExtraFiles[0] becomes fd 3 in the child process. With multiple devices
+		// the filter_complex exposes the mix as label [b] via asplit; pass that
+		// so the pipe receives mixed audio rather than just input 0.
+		mapLabel := ""
+		if len(opts.Devices) > 1 {
+			mapLabel = "[b]"
+		}
+		args = appendPCMPipeArgs(args, 3, mapLabel)
 	}
 
 	cmd := exec.Command("ffmpeg", args...)

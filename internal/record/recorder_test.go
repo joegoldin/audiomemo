@@ -313,7 +313,7 @@ func TestGenerateClipFilenameFirstClip(t *testing.T) {
 
 func TestAppendPCMPipeArgs(t *testing.T) {
 	base := []string{"-f", "pulse", "-i", "default"}
-	result := appendPCMPipeArgs(base, 3)
+	result := appendPCMPipeArgs(base, 3, "")
 
 	// Original args should be unchanged (result is a new slice).
 	if len(base) != 4 {
@@ -332,7 +332,7 @@ func TestAppendPCMPipeArgs(t *testing.T) {
 	}
 
 	// Also verify with a different fd number.
-	result5 := appendPCMPipeArgs([]string{}, 5)
+	result5 := appendPCMPipeArgs([]string{}, 5, "")
 	if !containsArg(result5, "pipe:5") {
 		t.Errorf("expected pipe:5 in args, got %v", result5)
 	}
@@ -344,6 +344,71 @@ func TestAppendPCMPipeArgs(t *testing.T) {
 	}
 	if argAfter(result5, "-ac") != "1" {
 		t.Errorf("expected -ac 1, got -ac %s", argAfter(result5, "-ac"))
+	}
+
+	// With a map label, -map <label> should appear before the PCM output spec.
+	mapped := appendPCMPipeArgs([]string{}, 3, "[b]")
+	mapIdx := -1
+	pipeIdx := -1
+	for i, a := range mapped {
+		if a == "-map" && i+1 < len(mapped) && mapped[i+1] == "[b]" {
+			mapIdx = i
+		}
+		if a == "pipe:3" {
+			pipeIdx = i
+		}
+	}
+	if mapIdx < 0 {
+		t.Errorf("expected -map [b] when mapLabel is set, got: %v", mapped)
+	}
+	if pipeIdx < 0 {
+		t.Errorf("expected pipe:3 in output, got: %v", mapped)
+	}
+	if mapIdx >= 0 && pipeIdx >= 0 && mapIdx > pipeIdx {
+		t.Errorf("-map [b] must come before pipe:3, got: %v", mapped)
+	}
+}
+
+// TestBuildFFmpegArgsMultiLivePCMSplitsMix verifies that with LivePCM and
+// multiple devices the filter graph uses asplit so [b] is available to map
+// to the PCM pipe output, otherwise the pipe would receive only input 0.
+func TestBuildFFmpegArgsMultiLivePCMSplitsMix(t *testing.T) {
+	opts := RecordOpts{
+		Devices:    []string{"mic", "system_monitor"},
+		Format:     "ogg",
+		SampleRate: 48000,
+		Channels:   1,
+		OutputPath: "/tmp/test.ogg",
+		LivePCM:    true,
+	}
+	args, err := BuildFFmpegArgsMulti(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fc := argAfter(args, "-filter_complex")
+	if !strings.Contains(fc, "asplit=2[a][b]") {
+		t.Errorf("expected filter_complex to end with asplit=2[a][b] when LivePCM is set, got: %s", fc)
+	}
+}
+
+// TestBuildFFmpegArgsMultiNoLivePCMHasNoSplit verifies the asplit only appears
+// when LivePCM is requested — otherwise the existing single-output graph is
+// used to avoid unnecessary work.
+func TestBuildFFmpegArgsMultiNoLivePCMHasNoSplit(t *testing.T) {
+	opts := RecordOpts{
+		Devices:    []string{"mic", "system_monitor"},
+		Format:     "ogg",
+		SampleRate: 48000,
+		Channels:   1,
+		OutputPath: "/tmp/test.ogg",
+	}
+	args, err := BuildFFmpegArgsMulti(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	fc := argAfter(args, "-filter_complex")
+	if strings.Contains(fc, "asplit") {
+		t.Errorf("did not expect asplit when LivePCM is unset, got: %s", fc)
 	}
 }
 

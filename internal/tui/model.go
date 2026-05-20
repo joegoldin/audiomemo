@@ -24,21 +24,21 @@ const (
 type StartFunc func() (*record.Recorder, error)
 
 type Model struct {
-	state        State
-	recorder     *record.Recorder
-	opts         record.RecordOpts
-	startTime    time.Time
-	elapsed      time.Duration
-	level        float64
-	tick         int
-	anim         *Animation
-	transcribe   bool // set when user presses Q to quit-and-transcribe
-	muted        bool
-	clipDone     bool   // set when user presses q in clips mode (save clip, continue)
-	clipsMode    bool
-	clipNumber   int
-	savedMessage string // e.g. "Saved clip 3!"
-	startFunc    StartFunc
+	state             State
+	recorder          *record.Recorder
+	opts              record.RecordOpts
+	startTime         time.Time
+	elapsed           time.Duration
+	level             float64
+	tick              int
+	anim              *Animation
+	transcribe        bool // set when user presses Q to quit-and-transcribe
+	muted             bool
+	clipDone          bool // set when user presses q in clips mode (save clip, continue)
+	clipsMode         bool
+	clipNumber        int
+	savedMessage      string // e.g. "Saved clip 3!"
+	startFunc         StartFunc
 	err               error
 	width             int
 	height            int
@@ -229,8 +229,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, listenPartial(m.streamer)
 
 	case streamErrMsg:
+		// Keep liveTranscription true so the transcript captured before the
+		// failure stays visible. The error line below the transcript informs
+		// the user that streaming stopped; recording continues unaffected.
 		m.streamErr = error(msg)
-		m.liveTranscription = false
 		return m, nil
 	}
 	return m, nil
@@ -304,12 +306,13 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 var (
-	recStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")).Bold(true)
-	readyStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308")).Bold(true)
-	muteStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308")).Bold(true)
-	savedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true)
-	dimStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
-	infoStyle  = lipgloss.NewStyle().Foreground(lipgloss.Color("#a1a1aa"))
+	recStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444")).Bold(true)
+	readyStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308")).Bold(true)
+	muteStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308")).Bold(true)
+	savedStyle     = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e")).Bold(true)
+	dimStyle       = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
+	infoStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("#a1a1aa"))
+	streamErrStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#f59e0b")).Bold(true)
 )
 
 func (m *Model) View() string {
@@ -381,6 +384,9 @@ func (m *Model) View() string {
 	if m.liveTranscription {
 		parts = append(parts, dimStyle.Render(strings.Repeat("─", m.width)))
 		parts = append(parts, m.transcript.View())
+	}
+	if m.streamErr != nil {
+		parts = append(parts, streamErrStyle.Render(fmt.Sprintf("  ⚠ live transcription stopped: %v", m.streamErr)))
 	}
 
 	parts = append(parts, "", keys)

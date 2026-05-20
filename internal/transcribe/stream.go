@@ -15,10 +15,13 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+// realtimeModelID is the only ElevenLabs model that supports the realtime
+// WebSocket endpoint. The batch "scribe_v2" model is not valid here.
+const realtimeModelID = "scribe_v2_realtime"
+
 // Streamer manages a realtime ElevenLabs WebSocket transcription session.
 type Streamer struct {
 	apiKey       string
-	model        string
 	storeInCloud bool
 	baseURL      string // "wss://api.elevenlabs.io" default, overridable for tests
 
@@ -30,24 +33,46 @@ type Streamer struct {
 	cancel context.CancelFunc
 	mu     sync.Mutex
 
-	committed []string      // accumulated committed text
-	file      *os.File      // transcript file, flushed on each commit
+	committed []string // accumulated committed text
+	file      *os.File // transcript file, flushed on each commit
 	writer    *bufio.Writer
 
 	once sync.Once
 }
 
 // NewStreamer allocates a new Streamer with buffered channels.
-func NewStreamer(apiKey, model string, storeInCloud bool) *Streamer {
+func NewStreamer(apiKey string, storeInCloud bool) *Streamer {
 	return &Streamer{
 		apiKey:       apiKey,
-		model:        model,
 		storeInCloud: storeInCloud,
 		baseURL:      "wss://api.elevenlabs.io",
 		Committed:    make(chan string, 64),
 		Partial:      make(chan string, 16),
 		Err:          make(chan error, 1),
 	}
+}
+
+// errorMessageTypes lists every realtime API message_type that signals a
+// session-fatal error per the ElevenLabs docs.
+var errorMessageTypes = map[string]struct{}{
+	"error":                       {},
+	"auth_error":                  {},
+	"quota_exceeded":              {},
+	"commit_throttled":            {},
+	"unaccepted_terms":            {},
+	"rate_limited":                {},
+	"queue_overflow":              {},
+	"resource_exhausted":          {},
+	"session_time_limit_exceeded": {},
+	"input_error":                 {},
+	"chunk_size_exceeded":         {},
+	"insufficient_audio_activity": {},
+	"transcriber_error":           {},
+}
+
+func isErrorMessageType(t string) bool {
+	_, ok := errorMessageTypes[t]
+	return ok
 }
 
 type audioChunkMsg struct {
@@ -60,16 +85,20 @@ type audioChunkMsg struct {
 type wsIncomingMsg struct {
 	MessageType string `json:"message_type"`
 	Text        string `json:"text"`
-	Message     string `json:"message"` // used in error messages
+	Error       string `json:"error"` // populated on error message types
 }
 
 // Start dials the ElevenLabs WebSocket endpoint and begins streaming audio from pcmReader.
 // It opens transcriptPath for appending committed transcripts.
 // Returns nil after successfully connecting and spawning background goroutines.
 func (s *Streamer) Start(ctx context.Context, pcmReader io.Reader, transcriptPath string) error {
+	enableLogging := "true"
+	if !s.storeInCloud {
+		enableLogging = "false"
+	}
 	wsURL := fmt.Sprintf(
-		"%s/v1/speech-to-text/realtime?model_id=%s&commit_strategy=vad&vad_silence_threshold_secs=1&audio_format=pcm_16000",
-		s.baseURL, s.model,
+		"%s/v1/speech-to-text/realtime?model_id=%s&commit_strategy=vad&vad_silence_threshold_secs=1&audio_format=pcm_16000&enable_logging=%s",
+		s.baseURL, realtimeModelID, enableLogging,
 	)
 
 	headers := http.Header{}
@@ -99,7 +128,12 @@ func (s *Streamer) Start(ctx context.Context, pcmReader io.Reader, transcriptPat
 }
 
 func (s *Streamer) sendLoop(ctx context.Context, r io.Reader) {
+	// Once WebSocket writes fail (server rejection, disconnect, etc.) we MUST
+	// keep draining the pipe to /dev/null. Otherwise ffmpeg blocks writing PCM
+	// to the pipe, which stalls the entire recording pipeline (including the
+	// primary encoded output) and makes Stop() hang indefinitely.
 	buf := make([]byte, 4096)
+	sendFailed := false
 	for {
 		select {
 		case <-ctx.Done():
@@ -108,7 +142,7 @@ func (s *Streamer) sendLoop(ctx context.Context, r io.Reader) {
 		}
 
 		n, err := r.Read(buf)
-		if n > 0 {
+		if n > 0 && !sendFailed {
 			encoded := base64.StdEncoding.EncodeToString(buf[:n])
 			msg := audioChunkMsg{
 				MessageType: "input_audio_chunk",
@@ -118,10 +152,9 @@ func (s *Streamer) sendLoop(ctx context.Context, r io.Reader) {
 			}
 			data, jerr := json.Marshal(msg)
 			if jerr != nil {
-				return
-			}
-			if werr := s.conn.WriteMessage(websocket.TextMessage, data); werr != nil {
-				return
+				sendFailed = true
+			} else if werr := s.conn.WriteMessage(websocket.TextMessage, data); werr != nil {
+				sendFailed = true
 			}
 		}
 		if err == io.EOF {
@@ -189,19 +222,21 @@ func (s *Streamer) recvLoop(ctx context.Context) {
 			default:
 			}
 
-		case "error", "auth_error", "quota_exceeded", "rate_limited":
-			errMsg := msg.Message
-			if errMsg == "" {
-				errMsg = msg.Text
+		default:
+			if isErrorMessageType(msg.MessageType) {
+				errMsg := msg.Error
+				if errMsg == "" {
+					errMsg = msg.Text
+				}
+				if errMsg == "" {
+					errMsg = msg.MessageType
+				}
+				select {
+				case s.Err <- fmt.Errorf("elevenlabs error (%s): %s", msg.MessageType, errMsg):
+				default:
+				}
+				return
 			}
-			if errMsg == "" {
-				errMsg = msg.MessageType
-			}
-			select {
-			case s.Err <- fmt.Errorf("elevenlabs error (%s): %s", msg.MessageType, errMsg):
-			default:
-			}
-			return
 		}
 	}
 }

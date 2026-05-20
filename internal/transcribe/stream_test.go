@@ -21,7 +21,7 @@ var wsUpgrader = websocket.Upgrader{
 
 // newTestStreamer returns a Streamer pointing at the given httptest server.
 func newTestStreamer(server *httptest.Server) *Streamer {
-	s := NewStreamer("test-key", "scribe_v2", false)
+	s := NewStreamer("test-key", false)
 	s.baseURL = "ws://" + server.Listener.Addr().String()
 	return s
 }
@@ -363,7 +363,7 @@ func TestStreamerErrorHandling(t *testing.T) {
 
 				msg, _ := json.Marshal(map[string]string{
 					"message_type": errType,
-					"message":      "something went wrong",
+					"error":        "something went wrong",
 				})
 				conn.WriteMessage(websocket.TextMessage, msg)
 				time.Sleep(200 * time.Millisecond)
@@ -391,6 +391,98 @@ func TestStreamerErrorHandling(t *testing.T) {
 			if !strings.Contains(e.Error(), errType) {
 				t.Errorf("expected error to contain %q, got: %v", errType, e)
 			}
+			if !strings.Contains(e.Error(), "something went wrong") {
+				t.Errorf("expected error to contain server-supplied detail, got: %v", e)
+			}
 		})
 	}
+}
+
+// TestStreamerUsesRealtimeModel verifies the WebSocket URL contains the
+// realtime model_id, not whatever batch model the user has configured.
+func TestStreamerUsesRealtimeModel(t *testing.T) {
+	got := make(chan string, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		select {
+		case got <- r.URL.RawQuery:
+		default:
+		}
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		time.Sleep(50 * time.Millisecond)
+	}))
+	defer server.Close()
+
+	s := newTestStreamer(server)
+	tmpFile := filepath.Join(t.TempDir(), "transcript.txt")
+	pr, pw := io.Pipe()
+	pw.Close()
+	if err := s.Start(t.Context(), pr, tmpFile); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer s.Stop()
+
+	select {
+	case q := <-got:
+		if !strings.Contains(q, "model_id=scribe_v2_realtime") {
+			t.Errorf("expected query to contain model_id=scribe_v2_realtime, got: %s", q)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("server did not receive a request")
+	}
+}
+
+// TestStreamerDrainsPipeAfterSendFailure verifies that once the WebSocket
+// closes mid-stream the sendLoop keeps reading from the PCM pipe. This is
+// critical: if it stopped, ffmpeg's PCM writes would block and stall the
+// entire recording pipeline.
+func TestStreamerDrainsPipeAfterSendFailure(t *testing.T) {
+	connected := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := wsUpgrader.Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		close(connected)
+		// Close immediately so the next client write fails.
+		conn.Close()
+	}))
+	defer server.Close()
+
+	s := newTestStreamer(server)
+	tmpFile := filepath.Join(t.TempDir(), "transcript.txt")
+	pr, pw := io.Pipe()
+	if err := s.Start(t.Context(), pr, tmpFile); err != nil {
+		t.Fatalf("Start returned error: %v", err)
+	}
+	defer s.Stop()
+
+	<-connected
+
+	// Push a chunk so the first write triggers the failure path.
+	go func() { pw.Write(make([]byte, 4096)) }()
+
+	// Then push enough additional data to overflow any reasonable in-process
+	// buffer. If sendLoop stopped reading after the failure, this Write would
+	// block forever; we'd time out below.
+	done := make(chan struct{})
+	go func() {
+		for i := 0; i < 64; i++ {
+			if _, err := pw.Write(make([]byte, 4096)); err != nil {
+				return
+			}
+		}
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Pipe was drained successfully.
+	case <-time.After(2 * time.Second):
+		t.Fatal("sendLoop did not drain pipe after WS failure; ffmpeg would block here")
+	}
+	pw.Close()
 }
