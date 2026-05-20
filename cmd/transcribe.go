@@ -269,6 +269,14 @@ func transcriptPathFor(audioPath string, format transcribe.OutputFormat) string 
 	return base + ext
 }
 
+// liveTranscriptPathFor returns the path for the live realtime transcript
+// alongside the audio file. The -live suffix keeps it separate from the batch
+// transcript at <base>.txt so both are preserved after a -t recording.
+func liveTranscriptPathFor(audioPath string) string {
+	base := strings.TrimSuffix(audioPath, filepath.Ext(audioPath))
+	return base + "-live.txt"
+}
+
 func bufferStdin() (string, error) {
 	tmp, err := os.CreateTemp("", "audiomemo-stdin-*")
 	if err != nil {

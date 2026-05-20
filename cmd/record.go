@@ -215,7 +215,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	}
 
 	if streamer != nil {
-		transcriptPath := transcriptPathFor(outputPath, transcribe.FormatText)
+		transcriptPath := liveTranscriptPathFor(outputPath)
 		if err := streamer.Start(context.Background(), rec.PCMReader, transcriptPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: live transcription failed to start: %v\n", err)
 			streamer = nil
@@ -243,9 +243,15 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		if _, err := p.Run(); err != nil {
 			return err
 		}
-		// Wait for ffmpeg to fully exit and finalize the output file
+		// Wait for ffmpeg to fully exit and finalize the output file. ffmpeg
+		// can exit non-zero even after writing a valid file — notably when
+		// the live-streaming PCM pipe tears down on 'q', it sometimes
+		// surfaces broken-pipe warnings as a non-zero status. Treat any
+		// error as a warning so the post-recording batch transcribe still
+		// runs; if the audio file is actually corrupt the batch step will
+		// fail loudly on its own.
 		if err := rec.Wait(); err != nil {
-			return fmt.Errorf("recording failed: %w", err)
+			fmt.Fprintf(os.Stderr, "Warning: recording exited with error: %v\n", err)
 		}
 		if model.ShouldTranscribe() {
 			shouldTranscribe = true
@@ -261,11 +267,9 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	fmt.Println(outputPath)
 
 	if shouldTranscribe {
-		// Always run batch after recording. When live streaming worked, the
-		// live transcript on disk is overwritten with the batch result, which
-		// adds features the realtime API lacks (notably diarization). The
-		// transcribe subcommand writes to the same transcriptPathFor() target
-		// the streamer used, so the diarized version replaces the live text.
+		// Always run batch after recording. The live streamer writes its
+		// preview to <base>-live.txt; the batch transcribe writes the
+		// diarized full result to <base>.txt. Both files are preserved.
 		return runPostTranscribe(outputPath)
 	}
 
