@@ -113,45 +113,55 @@ func (t TranscriptViewport) IsAutoScroll() bool {
 
 // rebuildContent rebuilds the viewport content from committed + partial text.
 func (t *TranscriptViewport) rebuildContent() {
-	wrapped := wordWrap(t.committed, t.width)
-	if t.partial != "" {
-		if wrapped != "" {
-			wrapped += " "
-		}
-		wrapped += transcriptDimStyle.Render(t.partial)
-	}
-	t.viewport.SetContent(wrapped)
+	t.viewport.SetContent(wrapTranscript(t.committed, t.partial, t.width))
 }
 
-// wordWrap wraps text at the given width by breaking on spaces.
-// Words are never broken; if a word is longer than width it stays on its own line.
-func wordWrap(text string, width int) string {
-	if width <= 0 || text == "" {
-		return text
+// wrapTranscript word-wraps committed + partial together so the partial text
+// continues onto new lines instead of overflowing the last committed line.
+// Partial words are rendered with transcriptDimStyle; committed words are
+// rendered plain. Word boundaries are spaces; words longer than width stay
+// on their own line (they are not broken).
+func wrapTranscript(committed, partial string, width int) string {
+	if width <= 0 {
+		return committed + " " + partial
 	}
 
-	words := strings.Split(text, " ")
+	type wrapWord struct {
+		text string
+		dim  bool
+	}
+	var words []wrapWord
+	for _, w := range strings.Fields(committed) {
+		words = append(words, wrapWord{text: w})
+	}
+	for _, w := range strings.Fields(partial) {
+		words = append(words, wrapWord{text: w, dim: true})
+	}
+	if len(words) == 0 {
+		return ""
+	}
+
 	var b strings.Builder
 	lineLen := 0
-
-	for i, word := range words {
-		if word == "" {
-			continue
+	for i, w := range words {
+		wordLen := len(w.text)
+		render := w.text
+		if w.dim {
+			render = transcriptDimStyle.Render(w.text)
 		}
-		wordLen := len(word)
-		if i == 0 || lineLen == 0 {
-			b.WriteString(word)
+		switch {
+		case i == 0 || lineLen == 0:
+			b.WriteString(render)
 			lineLen = wordLen
-		} else if lineLen+1+wordLen > width {
+		case lineLen+1+wordLen > width:
 			b.WriteByte('\n')
-			b.WriteString(word)
+			b.WriteString(render)
 			lineLen = wordLen
-		} else {
+		default:
 			b.WriteByte(' ')
-			b.WriteString(word)
+			b.WriteString(render)
 			lineLen += 1 + wordLen
 		}
 	}
-
 	return b.String()
 }

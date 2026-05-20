@@ -3,6 +3,8 @@ package tui
 import (
 	"strings"
 	"testing"
+
+	"github.com/charmbracelet/lipgloss"
 )
 
 func TestTranscriptViewportAutoScrollDefault(t *testing.T) {
@@ -36,19 +38,56 @@ func TestTranscriptViewportPartialText(t *testing.T) {
 
 func TestTranscriptViewportWordWrap(t *testing.T) {
 	tv := NewTranscriptViewport(20, 24)
-	// Append a string longer than 20 chars so wrapping occurs.
 	tv.AppendCommitted("one two three four five six")
 
-	// Get the raw content from the viewport by rebuilding it.
-	wrapped := wordWrap("one two three four five six", 20)
+	wrapped := wrapTranscript("one two three four five six", "", 20)
 	lines := strings.Split(wrapped, "\n")
 	if len(lines) < 2 {
 		t.Errorf("expected wrapping to produce multiple lines, got: %q", wrapped)
 	}
-	// Verify no line exceeds width 20.
 	for i, line := range lines {
-		if len(line) > 20 {
-			t.Errorf("line %d exceeds width 20: %q (len=%d)", i, line, len(line))
+		if w := lipgloss.Width(line); w > 20 {
+			t.Errorf("line %d exceeds width 20 (width=%d): %q", i, w, line)
+		}
+	}
+}
+
+func TestWrapTranscriptWrapsPartialOverflow(t *testing.T) {
+	// Committed text fills part of a line; partial extends well past width.
+	// Every output line must fit the width — including the line where the
+	// partial begins after committed text.
+	const width = 30
+	committed := "done text near edge here"
+	partial := "now we keep typing more words that absolutely must wrap to next lines"
+	out := wrapTranscript(committed, partial, width)
+	for i, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > width {
+			t.Errorf("line %d width %d exceeds %d: %q", i, w, width, line)
+		}
+	}
+}
+
+func TestWrapTranscriptDimsPartialWords(t *testing.T) {
+	out := wrapTranscript("done", "wip", 80)
+	dimmed := transcriptDimStyle.Render("wip")
+	if !strings.Contains(out, dimmed) {
+		t.Errorf("expected dim-styled %q in output, got: %q", dimmed, out)
+	}
+	if !strings.Contains(out, "done") {
+		t.Errorf("expected committed %q in output, got: %q", "done", out)
+	}
+}
+
+func TestWrapTranscriptHandlesOnlyPartial(t *testing.T) {
+	out := wrapTranscript("", "alpha beta gamma", 8)
+	for i, line := range strings.Split(out, "\n") {
+		if w := lipgloss.Width(line); w > 8 {
+			t.Errorf("line %d width %d exceeds 8: %q", i, w, line)
+		}
+	}
+	for _, w := range []string{"alpha", "beta", "gamma"} {
+		if !strings.Contains(out, w) {
+			t.Errorf("expected %q in output, got: %q", w, out)
 		}
 	}
 }
