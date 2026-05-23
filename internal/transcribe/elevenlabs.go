@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 )
 
 type ElevenLabs struct {
@@ -18,14 +19,20 @@ type ElevenLabs struct {
 	defaultModel string
 	baseURL      string
 	storeInCloud bool
+	// deleteRetryDelay is the initial backoff before retrying a 404 on
+	// DELETE. The synchronous transcribe response returns a transcription_id
+	// before the server has finished persisting it, so an immediate delete
+	// races the writer and 404s.
+	deleteRetryDelay time.Duration
 }
 
 func NewElevenLabs(apiKey, defaultModel string, storeInCloud bool) *ElevenLabs {
 	return &ElevenLabs{
-		apiKey:       apiKey,
-		defaultModel: defaultModel,
-		baseURL:      "https://api.elevenlabs.io",
-		storeInCloud: storeInCloud,
+		apiKey:           apiKey,
+		defaultModel:     defaultModel,
+		baseURL:          "https://api.elevenlabs.io",
+		storeInCloud:     storeInCloud,
+		deleteRetryDelay: 500 * time.Millisecond,
 	}
 }
 
@@ -252,24 +259,43 @@ func buildTextFromWords(words []elevenlabsWord) string {
 }
 
 // deleteTranscript removes a transcript from ElevenLabs cloud storage.
+// On 404 we retry with backoff: the API persists transcripts asynchronously,
+// so the just-returned transcription_id may not be findable for a moment.
 // Errors are logged but not returned since the transcription itself succeeded.
 func (e *ElevenLabs) deleteTranscript(ctx context.Context, transcriptionID string) {
 	reqURL := fmt.Sprintf("%s/v1/speech-to-text/transcripts/%s", e.baseURL, transcriptionID)
-	req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to create delete request for ElevenLabs transcript: %v\n", err)
-		return
-	}
-	req.Header.Set("xi-api-key", e.apiKey)
+	const maxAttempts = 5
 
-	resp, err := http.DefaultClient.Do(req)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Warning: failed to delete ElevenLabs transcript %s: %v\n", transcriptionID, err)
-		return
-	}
-	resp.Body.Close()
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		if attempt > 0 {
+			delay := e.deleteRetryDelay * time.Duration(1<<(attempt-1))
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(delay):
+			}
+		}
 
-	if resp.StatusCode >= 400 {
-		fmt.Fprintf(os.Stderr, "Warning: failed to delete ElevenLabs transcript %s (HTTP %d)\n", transcriptionID, resp.StatusCode)
+		req, err := http.NewRequestWithContext(ctx, "DELETE", reqURL, nil)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to create delete request for ElevenLabs transcript: %v\n", err)
+			return
+		}
+		req.Header.Set("xi-api-key", e.apiKey)
+
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: failed to delete ElevenLabs transcript %s: %v\n", transcriptionID, err)
+			return
+		}
+		resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotFound {
+			continue
+		}
+		if resp.StatusCode >= 400 {
+			fmt.Fprintf(os.Stderr, "Warning: failed to delete ElevenLabs transcript %s (HTTP %d)\n", transcriptionID, resp.StatusCode)
+		}
+		return
 	}
 }

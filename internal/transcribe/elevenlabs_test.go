@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"sync/atomic"
 	"testing"
+	"time"
 )
 
 func TestElevenLabsName(t *testing.T) {
@@ -202,6 +203,80 @@ func TestElevenLabsDeleteAfterTranscribe(t *testing.T) {
 	}
 	if deleteCalled.Load() != 0 {
 		t.Errorf("expected no delete call, got %d", deleteCalled.Load())
+	}
+}
+
+func TestElevenLabsDeleteRetriesOn404(t *testing.T) {
+	var deleteCalls atomic.Int32
+	tid := "txn_eventual"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			n := deleteCalls.Add(1)
+			if n < 3 {
+				w.WriteHeader(http.StatusNotFound)
+				return
+			}
+			w.WriteHeader(http.StatusOK)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"language_code":        "eng",
+			"language_probability": 0.99,
+			"text":                 "test",
+			"words":                []any{},
+			"transcription_id":     tid,
+		})
+	}))
+	defer server.Close()
+
+	tmp := filepath.Join(t.TempDir(), "test.ogg")
+	os.WriteFile(tmp, []byte("fake audio"), 0644)
+
+	e := NewElevenLabs("test-key", "scribe_v2", false)
+	e.baseURL = server.URL
+	e.deleteRetryDelay = 1 * time.Millisecond
+
+	if _, err := e.Transcribe(t.Context(), tmp, TranscribeOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := deleteCalls.Load(); got != 3 {
+		t.Errorf("expected 3 delete attempts (2x404, 1x200), got %d", got)
+	}
+}
+
+func TestElevenLabsDeleteGivesUpAfter404s(t *testing.T) {
+	var deleteCalls atomic.Int32
+	tid := "txn_never_stored"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == "DELETE" {
+			deleteCalls.Add(1)
+			w.WriteHeader(http.StatusNotFound)
+			return
+		}
+		json.NewEncoder(w).Encode(map[string]any{
+			"language_code":        "eng",
+			"language_probability": 0.99,
+			"text":                 "test",
+			"words":                []any{},
+			"transcription_id":     tid,
+		})
+	}))
+	defer server.Close()
+
+	tmp := filepath.Join(t.TempDir(), "test.ogg")
+	os.WriteFile(tmp, []byte("fake audio"), 0644)
+
+	e := NewElevenLabs("test-key", "scribe_v2", false)
+	e.baseURL = server.URL
+	e.deleteRetryDelay = 1 * time.Millisecond
+
+	if _, err := e.Transcribe(t.Context(), tmp, TranscribeOpts{}); err != nil {
+		t.Fatal(err)
+	}
+	if got := deleteCalls.Load(); got != 5 {
+		t.Errorf("expected 5 delete attempts before giving up, got %d", got)
 	}
 }
 
