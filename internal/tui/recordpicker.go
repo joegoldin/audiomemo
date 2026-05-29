@@ -185,37 +185,44 @@ func (m *recordPickerModel) buildItems(devices []record.Device) {
 		})
 	}
 
-	// 4. Raw source devices not covered by an alias, sorted by description.
-	var rawDevs []record.Device
-	for _, d := range devices {
-		if !d.IsMonitor && !aliased[d.Name] {
-			rawDevs = append(rawDevs, d)
+	// 4. Raw source devices + monitor sinks, each in their own section, sorted
+	// by description. Monitors used to be hidden here so the only way to
+	// record system audio was via an alias — keep them visible so users can
+	// grab a sink monitor without round-tripping through alias setup.
+	appendRaw := func(kind string, want func(record.Device) bool) {
+		var rawDevs []record.Device
+		for _, d := range devices {
+			if want(d) && !aliased[d.Name] {
+				rawDevs = append(rawDevs, d)
+			}
 		}
-	}
-	sort.Slice(rawDevs, func(i, j int) bool {
-		di, dj := rawDevs[i].Description, rawDevs[j].Description
-		if di == "" {
-			di = rawDevs[i].Name
-		}
-		if dj == "" {
-			dj = rawDevs[j].Name
-		}
-		return di < dj
-	})
-	for _, d := range rawDevs {
-		label := d.Description
-		if label == "" {
-			label = d.Name
-		}
-		if label == def {
-			continue // already listed as default
-		}
-		m.items = append(m.items, rpItem{
-			label:   label,
-			kind:    "device",
-			devices: []string{d.Name},
+		sort.Slice(rawDevs, func(i, j int) bool {
+			di, dj := rawDevs[i].Description, rawDevs[j].Description
+			if di == "" {
+				di = rawDevs[i].Name
+			}
+			if dj == "" {
+				dj = rawDevs[j].Name
+			}
+			return di < dj
 		})
+		for _, d := range rawDevs {
+			label := d.Description
+			if label == "" {
+				label = d.Name
+			}
+			if label == def {
+				continue // already listed as default
+			}
+			m.items = append(m.items, rpItem{
+				label:   label,
+				kind:    kind,
+				devices: []string{d.Name},
+			})
+		}
 	}
+	appendRaw("device", func(d record.Device) bool { return !d.IsMonitor })
+	appendRaw("monitor", func(d record.Device) bool { return d.IsMonitor })
 }
 
 // ---------------------------------------------------------------------------
@@ -477,6 +484,7 @@ func (m *recordPickerModel) viewPick() string {
 		{"GROUPS", "group"},
 		{"ALIASES", "alias"},
 		{"DEVICES", "device"},
+		{"MONITORS", "monitor"},
 	}
 
 	globalIdx := 0

@@ -50,8 +50,16 @@ in
   config = lib.mkIf cfg.enable {
     home.packages = [ cfg.package ];
 
-    xdg.configFile."audiomemo/config.toml" = {
-      source = configFile;
-    };
+    # The audiomemo TUI persists alias / group / default edits back to
+    # config.toml, so it must be a writable file rather than a read-only
+    # nix-store symlink. Declaratively overwrite it from the generated
+    # settings on every activation (removing any prior file or store symlink
+    # first). TUI edits are transient — `settings` is the source of truth.
+    home.activation.audiomemoConfig = lib.hm.dag.entryAfter [ "writeBoundary" ] ''
+      target="$HOME/.config/audiomemo/config.toml"
+      mkdir -p "$(dirname "$target")"
+      rm -f "$target"
+      install -m 0644 ${configFile} "$target"
+    '';
   };
 }

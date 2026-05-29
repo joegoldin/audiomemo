@@ -151,15 +151,27 @@ func runRecord(cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("failed to resolve device %q: %w", deviceName, err)
 		}
 
-		// Resolve any pretty/description names to raw PulseAudio names.
-		if availDevices, listErr := record.ListDevices(); listErr == nil {
-			devices = record.ResolveDeviceNames(devices, availDevices)
-		}
-
-		// Build a human-readable label for the TUI mic line.
 		deviceLabel = deviceName
 		if group, ok := cfg.DeviceGroups[deviceName]; ok && len(group) > 1 {
 			deviceLabel = fmt.Sprintf("%s (%s)", deviceName, strings.Join(group, " + "))
+		}
+	}
+
+	// Resolve pretty/description names to raw PulseAudio names, and
+	// fuzzy-substitute names that no longer exist verbatim (e.g. a PulseAudio
+	// profile rename like "HiFi__Line1__sink" -> "HiFi__Line__sink"). Applied
+	// for both the TUI-picker and explicit-device paths so a stale alias
+	// stored in config doesn't blow up ffmpeg.
+	if availDevices, listErr := record.ListDevices(); listErr == nil {
+		devices = record.ResolveDeviceNames(devices, availDevices)
+		for i, n := range devices {
+			if record.HasDevice(n, availDevices) {
+				continue
+			}
+			if matched, ok := record.FuzzyMatchDevice(n, availDevices); ok {
+				fmt.Fprintf(os.Stderr, "warning: device %q not found; auto-substituting %q (fuzzy match)\n", n, matched.Name)
+				devices[i] = matched.Name
+			}
 		}
 	}
 
