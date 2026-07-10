@@ -92,6 +92,31 @@ func TestWrapTranscriptHandlesOnlyPartial(t *testing.T) {
 	}
 }
 
+func TestTranscriptViewportSetPartialAutoScrolls(t *testing.T) {
+	// Partial text that wraps past the viewport height must scroll into view
+	// without waiting for committed text.
+	tv := NewTranscriptViewport(10, 2)
+	tv.AppendCommitted("one two three four")
+	tv.SetPartial("five six seven eight nine ten eleven twelve")
+
+	if !tv.viewport.AtBottom() {
+		t.Error("expected viewport at bottom after SetPartial with autoScroll on")
+	}
+}
+
+func TestTranscriptViewportSetPartialRespectsManualScroll(t *testing.T) {
+	tv := NewTranscriptViewport(10, 2)
+	tv.AppendCommitted("one two three four five six seven eight")
+	tv.autoScroll = false
+	tv.viewport.GotoTop()
+
+	tv.SetPartial("nine ten eleven twelve thirteen")
+
+	if tv.viewport.AtBottom() {
+		t.Error("expected viewport to stay put after SetPartial with autoScroll off")
+	}
+}
+
 func TestTranscriptViewportClearsPartialOnCommit(t *testing.T) {
 	tv := NewTranscriptViewport(80, 24)
 	tv.SetPartial("hello")

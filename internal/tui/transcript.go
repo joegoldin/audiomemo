@@ -46,11 +46,15 @@ func (t *TranscriptViewport) AppendCommitted(text string) {
 	}
 }
 
-// SetPartial sets the current partial (in-progress) text shown in dim style.
-// Does not change the scroll position.
+// SetPartial sets the current partial (in-progress) text shown in dim style
+// and scrolls to bottom if autoScroll is enabled, so wrapped partial text
+// stays in view as it grows.
 func (t *TranscriptViewport) SetPartial(text string) {
 	t.partial = text
 	t.rebuildContent()
+	if t.autoScroll {
+		t.viewport.GotoBottom()
+	}
 }
 
 // SetSize updates the viewport dimensions and rebuilds content.
