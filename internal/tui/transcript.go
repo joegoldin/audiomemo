@@ -15,6 +15,7 @@ type TranscriptViewport struct {
 	viewport   viewport.Model
 	committed  string // accumulated committed text
 	partial    string // current partial text (shown dim)
+	cursor     string // styled single-cell VU cursor at the insertion point
 	autoScroll bool
 	width      int
 	height     int
@@ -51,6 +52,20 @@ func (t *TranscriptViewport) AppendCommitted(text string) {
 // stays in view as it grows.
 func (t *TranscriptViewport) SetPartial(text string) {
 	t.partial = text
+	t.rebuildContent()
+	if t.autoScroll {
+		t.viewport.GotoBottom()
+	}
+}
+
+// SetCursor sets the styled single-cell VU cursor appended at the text
+// insertion point and rebuilds content. No-ops when the cursor is unchanged,
+// so the 30fps tick only pays for a rebuild when the level actually moved.
+func (t *TranscriptViewport) SetCursor(cursor string) {
+	if t.cursor == cursor {
+		return
+	}
+	t.cursor = cursor
 	t.rebuildContent()
 	if t.autoScroll {
 		t.viewport.GotoBottom()
@@ -117,17 +132,19 @@ func (t TranscriptViewport) IsAutoScroll() bool {
 
 // rebuildContent rebuilds the viewport content from committed + partial text.
 func (t *TranscriptViewport) rebuildContent() {
-	t.viewport.SetContent(wrapTranscript(t.committed, t.partial, t.width))
+	t.viewport.SetContent(wrapTranscript(t.committed, t.partial, t.width, t.cursor))
 }
 
 // wrapTranscript word-wraps committed + partial together so the partial text
 // continues onto new lines instead of overflowing the last committed line.
 // Partial words are rendered with transcriptDimStyle; committed words are
 // rendered plain. Word boundaries are spaces; words longer than width stay
-// on their own line (they are not broken).
-func wrapTranscript(committed, partial string, width int) string {
+// on their own line (they are not broken). The styled single-cell cursor is
+// appended directly after the last word; one cell is reserved for it on the
+// final line so it never wraps onto a line by itself.
+func wrapTranscript(committed, partial string, width int, cursor string) string {
 	if width <= 0 {
-		return committed + " " + partial
+		return committed + " " + partial + cursor
 	}
 
 	type wrapWord struct {
@@ -142,13 +159,22 @@ func wrapTranscript(committed, partial string, width int) string {
 		words = append(words, wrapWord{text: w, dim: true})
 	}
 	if len(words) == 0 {
-		return ""
+		return cursor
+	}
+
+	cursorW := 0
+	if cursor != "" {
+		cursorW = lipgloss.Width(cursor)
 	}
 
 	var b strings.Builder
 	lineLen := 0
 	for i, w := range words {
 		wordLen := len(w.text)
+		fitLen := wordLen
+		if i == len(words)-1 {
+			fitLen += cursorW
+		}
 		render := w.text
 		if w.dim {
 			render = transcriptDimStyle.Render(w.text)
@@ -157,7 +183,7 @@ func wrapTranscript(committed, partial string, width int) string {
 		case i == 0 || lineLen == 0:
 			b.WriteString(render)
 			lineLen = wordLen
-		case lineLen+1+wordLen > width:
+		case lineLen+1+fitLen > width:
 			b.WriteByte('\n')
 			b.WriteString(render)
 			lineLen = wordLen
@@ -167,5 +193,6 @@ func wrapTranscript(committed, partial string, width int) string {
 			lineLen += 1 + wordLen
 		}
 	}
+	b.WriteString(cursor)
 	return b.String()
 }
