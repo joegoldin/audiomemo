@@ -38,7 +38,14 @@ var recordCmd = &cobra.Command{
 	Use:     "record [flags] [name ...]",
 	Aliases: []string{"rec"},
 	Short:   "Record audio from microphone",
-	Long: `Record audio from your microphone with a live TUI showing VU meter and animation.
+	Long: `Record audio from your microphone with a live transcript view. The cursor
+at the end of the transcript doubles as a VU meter, changing height and color
+with the mic level.
+
+Live transcription streams automatically whenever an ElevenLabs API key is
+configured. Press q to stop and keep the live transcript at <name>.txt; press
+Q to stop and additionally run the higher-quality batch transcription, which
+overwrites <name>.txt (the live preview is kept at <name>-live.txt either way).
 
 An optional name can be passed as positional arguments to label the recording.
 Multiple words are joined with underscores.
@@ -62,7 +69,7 @@ func init() {
 	recordCmd.Flags().IntVarP(&rChannels, "channels", "c", 0, "channel count (1=mono, 2=stereo)")
 	recordCmd.Flags().StringVarP(&rName, "name", "n", "", "label for filename")
 	recordCmd.Flags().BoolVar(&rTemp, "temp", false, "save to temp directory")
-	recordCmd.Flags().BoolVarP(&rTranscribe, "transcribe", "t", false, "transcribe after recording")
+	recordCmd.Flags().BoolVarP(&rTranscribe, "transcribe", "t", false, "always run batch transcription on exit (as if quitting with Q)")
 	recordCmd.Flags().StringVar(&rTranscribeArgs, "transcribe-args", "", "extra args for transcribe")
 	recordCmd.Flags().BoolVar(&rNoTUI, "no-tui", false, "headless mode")
 	recordCmd.Flags().BoolVarP(&rVerbose, "verbose", "v", false, "verbose output (passed to transcribe)")
@@ -203,11 +210,14 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
 
 	var streamer *transcribe.Streamer
-	if rTranscribe && cfg.Transcribe.ElevenLabs.APIKey != "" {
+	streamNote := ""
+	if cfg.Transcribe.ElevenLabs.APIKey != "" {
 		streamer = transcribe.NewStreamer(
 			cfg.Transcribe.ElevenLabs.APIKey,
 			cfg.Transcribe.ElevenLabs.StoreInCloud,
 		)
+	} else {
+		streamNote = "live transcription unavailable: no ElevenLabs API key configured"
 	}
 
 	opts := record.RecordOpts{
@@ -230,6 +240,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		transcriptPath := liveTranscriptPathFor(outputPath)
 		if err := streamer.Start(context.Background(), rec.PCMReader, transcriptPath); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: live transcription failed to start: %v\n", err)
+			streamNote = fmt.Sprintf("live transcription unavailable: %v", err)
 			streamer = nil
 			// ffmpeg was started with the PCM pipe output and nothing else will
 			// read it. Drain it in the background so ffmpeg doesn't block on
@@ -250,6 +261,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 			model = tui.NewModelWithStreamer(rec, opts, streamer)
 		} else {
 			model = tui.NewModel(rec, opts)
+			model.SetStreamNote(streamNote)
 		}
 		p := tea.NewProgram(model, tea.WithAltScreen())
 		if _, err := p.Run(); err != nil {
@@ -274,14 +286,23 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		streamer.Stop()
 	}
 
+	// Promote the live transcript to the canonical <base>.txt so a transcript
+	// always exists. When batch transcription runs next (Q or -t), it
+	// overwrites the canonical file with the higher-quality result.
+	if promoted, err := promoteLiveTranscript(outputPath); err != nil {
+		fmt.Fprintf(os.Stderr, "Warning: failed to promote live transcript: %v\n", err)
+	} else if promoted != "" && rVerbose {
+		fmt.Fprintf(os.Stderr, "Saved live transcript to %s\n", promoted)
+	}
+
 	// Print just the path to stdout so it can be piped, e.g.:
 	//   transcribe $(record)
 	fmt.Println(outputPath)
 
 	if shouldTranscribe {
-		// Always run batch after recording. The live streamer writes its
-		// preview to <base>-live.txt; the batch transcribe writes the
-		// diarized full result to <base>.txt. Both files are preserved.
+		// Batch transcribe overwrites the promoted live transcript at
+		// <base>.txt with the diarized full result. The live preview is
+		// preserved at <base>-live.txt.
 		return runPostTranscribe(outputPath)
 	}
 
@@ -379,4 +400,28 @@ func runPostTranscribe(audioPath string) error {
 	transcribeCmd.Stdout = os.Stdout
 	transcribeCmd.Stderr = os.Stderr
 	return transcribeCmd.Run()
+}
+
+// promoteLiveTranscript copies the live transcript (<base>-live.txt) to the
+// canonical transcript path (<base>.txt) so a transcript always exists after
+// recording, even without a batch run. The live file is preserved; a later
+// batch transcription overwrites the canonical file with the diarized result.
+// Missing or blank live files are skipped (returns "", nil).
+func promoteLiveTranscript(audioPath string) (string, error) {
+	livePath := liveTranscriptPathFor(audioPath)
+	data, err := os.ReadFile(livePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	if strings.TrimSpace(string(data)) == "" {
+		return "", nil
+	}
+	dest := transcriptPathFor(audioPath, transcribe.FormatText)
+	if err := os.WriteFile(dest, data, 0644); err != nil {
+		return "", err
+	}
+	return dest, nil
 }
