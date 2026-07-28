@@ -305,21 +305,22 @@ func runClips(name, format string, sampleRate, channels int, devices []string, d
 			OutputPath:  outputPath,
 		}
 
-		startRec := func() (*record.Recorder, error) {
-			return record.Start(opts)
+		startRec := func() (*record.Recorder, *transcribe.Streamer, string, error) {
+			rec, err := record.Start(opts)
+			return rec, nil, "", err
 		}
 
 		var model *tui.Model
 		if clipNumber == 1 {
 			// First clip: start recording immediately
-			rec, err := startRec()
+			rec, _, _, err := startRec()
 			if err != nil {
 				return err
 			}
-			model = tui.NewClipsModel(nil, rec, opts, clipNumber, "")
+			model = tui.NewClipsModel(nil, rec, nil, opts, clipNumber, "")
 		} else {
 			// Subsequent clips: show ready state, wait for user to start
-			model = tui.NewClipsModel(startRec, nil, opts, clipNumber, savedMessage)
+			model = tui.NewClipsModel(startRec, nil, nil, opts, clipNumber, savedMessage)
 		}
 
 		p := tea.NewProgram(model, tea.WithAltScreen())

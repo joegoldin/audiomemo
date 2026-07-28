@@ -20,32 +20,33 @@ const (
 	StateSaved
 )
 
-// StartFunc creates and starts a new Recorder. Used for deferred start in clips mode.
-type StartFunc func() (*record.Recorder, error)
+// StartFunc creates and starts a new Recorder for a deferred clip, optionally
+// with a live-transcription Streamer. The string is a stream-unavailable note
+// ("" when streaming started) rendered dim below the transcript.
+type StartFunc func() (*record.Recorder, *transcribe.Streamer, string, error)
 
 type Model struct {
-	state             State
-	recorder          *record.Recorder
-	opts              record.RecordOpts
-	startTime         time.Time
-	elapsed           time.Duration
-	level             float64
-	tick              int
-	anim              *Animation
-	transcribe        bool // set when user presses Q to quit-and-transcribe
-	muted             bool
-	clipDone          bool // set when user presses q in clips mode (save clip, continue)
-	clipsMode         bool
-	clipNumber        int
-	savedMessage      string // e.g. "Saved clip 3!"
-	startFunc         StartFunc
-	err               error
-	width             int
-	height            int
-	streamer          *transcribe.Streamer
-	transcript        TranscriptViewport
-	liveTranscription bool
-	streamErr         error
+	state        State
+	recorder     *record.Recorder
+	opts         record.RecordOpts
+	startTime    time.Time
+	elapsed      time.Duration
+	level        float64
+	vu           VUMeter
+	transcribe   bool // set when user presses Q to quit-and-transcribe
+	muted        bool
+	clipDone     bool // set when user presses q in clips mode (save clip, continue)
+	clipsMode    bool
+	clipNumber   int
+	savedMessage string // e.g. "Saved clip 3!"
+	startFunc    StartFunc
+	err          error
+	width        int
+	height       int
+	streamer     *transcribe.Streamer
+	transcript   TranscriptViewport
+	streamErr    error
+	streamNote   string // e.g. "live transcription unavailable: ..."
 }
 
 // ShouldTranscribe returns true if the user pressed Q to quit-and-transcribe.
@@ -77,30 +78,24 @@ type streamErrMsg error
 
 func NewModel(rec *record.Recorder, opts record.RecordOpts) *Model {
 	return &Model{
-		state:     StateRecording,
-		recorder:  rec,
-		opts:      opts,
-		startTime: time.Now(),
-		anim:      NewAnimation(60, 9),
+		state:      StateRecording,
+		recorder:   rec,
+		opts:       opts,
+		startTime:  time.Now(),
+		level:      -60, // silence floor until the first RMS reading arrives
+		transcript: NewTranscriptViewport(60, 10),
 	}
 }
 
 func NewModelWithStreamer(rec *record.Recorder, opts record.RecordOpts, streamer *transcribe.Streamer) *Model {
-	return &Model{
-		state:             StateRecording,
-		recorder:          rec,
-		opts:              opts,
-		startTime:         time.Now(),
-		anim:              NewAnimation(60, 5),
-		streamer:          streamer,
-		transcript:        NewTranscriptViewport(60, 10),
-		liveTranscription: true,
-	}
+	m := NewModel(rec, opts)
+	m.streamer = streamer
+	return m
 }
 
 // NewClipsModel creates a Model for clips mode. If rec is nil, starts in StateReady
-// and uses startFunc to create the recorder when the user presses space/m.
-func NewClipsModel(startFunc StartFunc, rec *record.Recorder, opts record.RecordOpts, clipNumber int, savedMessage string) *Model {
+// and uses startFunc to create the recorder (and streamer) when the user presses space/m.
+func NewClipsModel(startFunc StartFunc, rec *record.Recorder, streamer *transcribe.Streamer, opts record.RecordOpts, clipNumber int, savedMessage string) *Model {
 	initialState := StateRecording
 	if rec == nil {
 		initialState = StateReady
@@ -108,9 +103,11 @@ func NewClipsModel(startFunc StartFunc, rec *record.Recorder, opts record.Record
 	return &Model{
 		state:        initialState,
 		recorder:     rec,
+		streamer:     streamer,
 		opts:         opts,
 		startTime:    time.Now(),
-		anim:         NewAnimation(60, 9),
+		level:        -60, // silence floor until the first RMS reading arrives
+		transcript:   NewTranscriptViewport(60, 10),
 		clipsMode:    true,
 		clipNumber:   clipNumber,
 		savedMessage: savedMessage,
@@ -118,12 +115,18 @@ func NewClipsModel(startFunc StartFunc, rec *record.Recorder, opts record.Record
 	}
 }
 
+// SetStreamNote sets a dim informational note shown below the transcript,
+// e.g. "live transcription unavailable: no ElevenLabs API key configured".
+func (m *Model) SetStreamNote(note string) {
+	m.streamNote = note
+}
+
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
 	if m.state == StateRecording {
 		cmds = append(cmds, listenLevel(m.recorder), listenDone(m.recorder))
 	}
-	if m.liveTranscription && m.streamer != nil {
+	if m.streamer != nil {
 		cmds = append(cmds, listenCommitted(m.streamer), listenPartial(m.streamer), listenStreamErr(m.streamer))
 	}
 	if m.state == StateReady {
@@ -190,13 +193,13 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
 		m.height = msg.Height
-		if m.liveTranscription {
-			viewportHeight := msg.Height - 13
-			if viewportHeight < 4 {
-				viewportHeight = 4
-			}
-			m.transcript.SetSize(msg.Width, viewportHeight)
+		// header + mic + out + 2 separators + keys = 6 fixed rows, plus up to
+		// 2 optional rows (saved message, stream error/note).
+		viewportHeight := msg.Height - 8
+		if viewportHeight < 4 {
+			viewportHeight = 4
 		}
+		m.transcript.SetSize(msg.Width, viewportHeight)
 		return m, nil
 
 	case tea.KeyMsg:
@@ -205,8 +208,14 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tickMsg:
 		if m.state == StateRecording {
 			m.elapsed = time.Since(m.startTime)
-			m.tick++
 		}
+		if m.state == StateRecording && !m.muted {
+			m.vu.Push(dbToLevel(m.level))
+		} else {
+			m.vu.Push(0)
+		}
+		paused := m.muted || m.state != StateRecording
+		m.transcript.SetCursor(renderVUCursor(m.vu.Level(), paused))
 		return m, tickCmd()
 
 	case levelMsg:
@@ -240,12 +249,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	var cmd tea.Cmd
-	if m.liveTranscription {
-		switch msg.String() {
-		case "up", "down", "pgup", "pgdown", "end":
-			m.transcript, cmd = m.transcript.Update(msg)
-			return m, cmd
-		}
+	switch msg.String() {
+	case "up", "down", "pgup", "pgdown", "end":
+		m.transcript, cmd = m.transcript.Update(msg)
+		return m, cmd
 	}
 
 	switch {
@@ -282,19 +289,25 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.state == StateReady {
 			// Start recording the next clip
 			if m.startFunc != nil {
-				rec, err := m.startFunc()
+				rec, streamer, note, err := m.startFunc()
 				if err != nil {
 					m.err = err
 					return m, tea.Quit
 				}
 				m.recorder = rec
+				m.streamer = streamer
+				m.streamNote = note
 			}
 			m.state = StateRecording
 			m.startTime = time.Now()
 			m.elapsed = 0
 			m.savedMessage = ""
 			m.muted = false
-			return m, tea.Batch(listenLevel(m.recorder), listenDone(m.recorder))
+			cmds := []tea.Cmd{listenLevel(m.recorder), listenDone(m.recorder)}
+			if m.streamer != nil {
+				cmds = append(cmds, listenCommitted(m.streamer), listenPartial(m.streamer), listenStreamErr(m.streamer))
+			}
+			return m, tea.Batch(cmds...)
 		}
 		if m.state == StateRecording {
 			m.recorder.ToggleMute()
@@ -330,22 +343,18 @@ func (m *Model) View() string {
 	}
 
 	dur := formatDuration(m.elapsed)
-	info := fmt.Sprintf("%dkHz %s", m.opts.SampleRate/1000, channelStr(m.opts.Channels))
-
 	var clipInfo string
 	if m.clipsMode {
 		clipInfo = dimStyle.Render(fmt.Sprintf("  clip %d", m.clipNumber))
 	}
-	header := fmt.Sprintf("  %s  %s%s       %s", status, dur, clipInfo, dimStyle.Render(info))
-
-	// Waveform (unified VU + scrolling history)
-	paused := m.muted || m.state == StateReady
-	animLevel := dbToLevel(m.level)
-	animView := m.anim.Render(m.tick, animLevel, paused)
-
-	// dB readout to the right of the waveform, vertically centered
-	dbStr := vuDBText.Render(" " + formatDB(m.anim.SmoothedLevel()))
-	center := lipgloss.JoinHorizontal(lipgloss.Center, animView, dbStr)
+	left := fmt.Sprintf("  %s  %s%s", status, dur, clipInfo)
+	info := dimStyle.Render(fmt.Sprintf("%dkHz %s", m.opts.SampleRate/1000, channelStr(m.opts.Channels)))
+	right := info + vuDBText.Render("  "+formatDB(m.vu.Level())+"  ")
+	pad := m.width - lipgloss.Width(left) - lipgloss.Width(right)
+	if pad < 2 {
+		pad = 2
+	}
+	header := left + strings.Repeat(" ", pad) + right
 
 	// Info
 	micDisplay := m.opts.Device
@@ -367,29 +376,29 @@ func (m *Model) View() string {
 		if m.state == StateReady {
 			keys = dimStyle.Render("  [space/m] record  [q]uit  [Q]uit+transcribe")
 		} else {
-			keys = dimStyle.Render("  [m]ute  [q] save clip  [Q]uit+transcribe")
+			keys = dimStyle.Render("  [↑↓] scroll  [m]ute  [q] save clip  [Q]uit+transcribe")
 		}
-	} else if m.liveTranscription {
-		keys = dimStyle.Render("  [↑↓] scroll  [m]ute  [q]uit  [Q]uit+transcribe")
 	} else {
-		keys = dimStyle.Render("  [m]ute  [q]uit  [Q]uit+transcribe")
+		keys = dimStyle.Render("  [↑↓] scroll  [m]ute  [q]uit  [Q]uit+transcribe")
 	}
 
-	parts := []string{header, "", center, ""}
+	sepWidth := m.width
+	if sepWidth <= 0 {
+		sepWidth = 60
+	}
+	sep := dimStyle.Render(strings.Repeat("─", sepWidth))
+
+	parts := []string{header, micLine, outLine}
 	if savedLine != "" {
 		parts = append(parts, savedLine)
 	}
-	parts = append(parts, micLine, outLine)
-
-	if m.liveTranscription {
-		parts = append(parts, dimStyle.Render(strings.Repeat("─", m.width)))
-		parts = append(parts, m.transcript.View())
-	}
+	parts = append(parts, sep, m.transcript.View())
 	if m.streamErr != nil {
 		parts = append(parts, streamErrStyle.Render(fmt.Sprintf("  ⚠ live transcription stopped: %v", m.streamErr)))
+	} else if m.streamNote != "" {
+		parts = append(parts, dimStyle.Render("  "+m.streamNote))
 	}
-
-	parts = append(parts, "", keys)
+	parts = append(parts, sep, keys)
 
 	return lipgloss.JoinVertical(lipgloss.Left, parts...)
 }
