@@ -11,6 +11,16 @@ var vuDBText = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
 
 var vuCursorMutedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#555555"))
 
+// Fractional block characters for the VU cursor, growing from the bottom of
+// the cell. Index 0 = empty (unused by the cursor), 8 = full block.
+var heightBlocks = []rune{' ', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'}
+
+var (
+	waveGreen  = lipgloss.NewStyle().Foreground(lipgloss.Color("#22c55e"))
+	waveYellow = lipgloss.NewStyle().Foreground(lipgloss.Color("#eab308"))
+	waveRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
+)
+
 func dbToLevel(db float64) float64 {
 	const minDB = -60.0
 	if db <= minDB {
@@ -38,8 +48,8 @@ func formatDB(smoothedLevel float64) string {
 	return fmt.Sprintf("%4.1f dB", db)
 }
 
-// VUMeter smooths raw 0..1 levels with fast attack and slow decay — the same
-// feel the old waveform's dB readout had.
+// VUMeter smooths raw 0..1 levels with fast attack and slow decay, so peaks
+// register immediately while the meter falls back gradually.
 type VUMeter struct {
 	smoothed float64
 }

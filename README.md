@@ -32,7 +32,9 @@ The binary dispatches on `argv[0]`: symlinks named `record`, `rec`, or
 
 ### record (alias: rec)
 
-Record audio with a live TUI showing a scrolling waveform and VU meter.
+Record audio with a live TUI showing a streaming transcript. The cursor at
+the end of the transcript doubles as a VU meter (height and color track the
+mic level). Live transcription is always on when an ElevenLabs key is set.
 When run without `-D`, an interactive device picker is shown first.
 
     -D, --device string          input device name, alias, or group
@@ -42,8 +44,8 @@ When run without `-D`, an interactive device picker is shown first.
     -c, --channels int           1=mono, 2=stereo
     -n, --name string            label for filename
         --temp                   save to temp directory
-    -t, --transcribe             transcribe after recording (live streaming
-                                 when ElevenLabs is configured)
+    -t, --transcribe             always run batch transcription on exit
+                                 (as if quitting with Q)
         --transcribe-args string extra args passed to transcribe
     -v, --verbose                verbose output (passed to transcribe)
     -L, --list-devices           list devices and exit
@@ -53,9 +55,9 @@ When run without `-D`, an interactive device picker is shown first.
 TUI keybindings during recording:
 
     p, space    pause/resume
-    q           stop and save
-    Q           stop, save, and transcribe
-    ↑/↓         scroll transcript (when live transcribing)
+    q           stop, save, and keep the live transcript
+    Q           stop, save, and batch-retranscribe (higher quality)
+    ↑/↓         scroll transcript
     pgup/pgdn   page through transcript history
     end          jump to latest transcript
 
@@ -167,18 +169,19 @@ Multi-device recording mixes all inputs via ffmpeg amix.
 
 ## LIVE TRANSCRIPTION
 
-When recording with `-t` and an ElevenLabs API key is configured,
-audio is streamed in realtime to ElevenLabs for live speech-to-text.
-The TUI displays a scrollable transcript below the waveform as you speak.
+Whenever an ElevenLabs API key is configured, audio is streamed in realtime
+to ElevenLabs for live speech-to-text — no flag needed. The transcript is the
+main content of the recording TUI; the cursor at the insertion point doubles
+as a VU meter.
 
 - Text appears as you talk (partial results in gray, committed text in white)
 - Auto-scrolls to show latest text; scroll up to browse history
 - `↓ live` indicator appears when scrolled up
-- Transcript file is saved incrementally (crash-safe)
-- Falls back to batch transcription if streaming fails
-
-If no ElevenLabs key is configured, `-t` uses batch transcription after
-recording stops (existing behavior).
+- Live transcript is saved incrementally to `<name>-live.txt` (crash-safe)
+- On quit, the live transcript is promoted to `<name>.txt`; quitting with `Q`
+  (or passing `-t`) then overwrites it with the batch result
+- If no ElevenLabs key is configured, recording shows a lone VU cursor and
+  transcripts are only produced by `Q` / `-t` batch runs
 
 ## INSTALL
 
