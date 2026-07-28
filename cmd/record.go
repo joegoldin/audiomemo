@@ -204,7 +204,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	}
 
 	if rClips {
-		return runClips(name, format, sampleRate, channels, devices, deviceLabel, outputDir)
+		return runClips(cfg, name, format, sampleRate, channels, devices, deviceLabel, outputDir)
 	}
 
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
@@ -309,13 +309,15 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runClips(name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string) error {
+func runClips(cfg *config.Config, name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string) error {
 	var savedPaths []string
 	clipNumber := 1
 	savedMessage := ""
+	apiKey := cfg.Transcribe.ElevenLabs.APIKey
 
 	for {
 		outputPath := filepath.Join(outputDir, record.GenerateClipFilename(format, name, clipNumber))
+		livePath := liveTranscriptPathFor(outputPath)
 		opts := record.RecordOpts{
 			Device:      devices[0],
 			Devices:     devices,
@@ -324,21 +326,42 @@ func runClips(name, format string, sampleRate, channels int, devices []string, d
 			SampleRate:  sampleRate,
 			Channels:    channels,
 			OutputPath:  outputPath,
+			LivePCM:     apiKey != "",
 		}
 
+		// Streamers are single-use (Stop closes their channels), so each clip
+		// gets a fresh one. clipStreamer holds the streamer created by
+		// startRec so it can be stopped after the clip's TUI exits.
+		var clipStreamer *transcribe.Streamer
 		startRec := func() (*record.Recorder, *transcribe.Streamer, string, error) {
 			rec, err := record.Start(opts)
-			return rec, nil, "", err
+			if err != nil {
+				return nil, nil, "", err
+			}
+			if apiKey == "" {
+				return rec, nil, "live transcription unavailable: no ElevenLabs API key configured", nil
+			}
+			s := transcribe.NewStreamer(apiKey, cfg.Transcribe.ElevenLabs.StoreInCloud)
+			if err := s.Start(context.Background(), rec.PCMReader, livePath); err != nil {
+				// Nothing else reads the PCM pipe; drain it so ffmpeg doesn't
+				// block on pipe writes. This clip records without live text;
+				// the next clip retries with a fresh streamer.
+				go io.Copy(io.Discard, rec.PCMReader)
+				return rec, nil, fmt.Sprintf("live transcription unavailable: %v", err), nil
+			}
+			clipStreamer = s
+			return rec, s, "", nil
 		}
 
 		var model *tui.Model
 		if clipNumber == 1 {
 			// First clip: start recording immediately
-			rec, _, _, err := startRec()
+			rec, streamer, note, err := startRec()
 			if err != nil {
 				return err
 			}
-			model = tui.NewClipsModel(nil, rec, nil, opts, clipNumber, "")
+			model = tui.NewClipsModel(nil, rec, streamer, opts, clipNumber, "")
+			model.SetStreamNote(note)
 		} else {
 			// Subsequent clips: show ready state, wait for user to start
 			model = tui.NewClipsModel(startRec, nil, nil, opts, clipNumber, savedMessage)
@@ -353,11 +376,20 @@ func runClips(name, format string, sampleRate, channels int, devices []string, d
 		recorded := rec != nil
 
 		if recorded {
-			if err := rec.Wait(); err != nil {
-				fmt.Fprintf(os.Stderr, "recording failed: %v\n", err)
-			} else {
-				savedPaths = append(savedPaths, outputPath)
-				fmt.Println(outputPath)
+			err := rec.Wait()
+			if clipStreamer != nil {
+				clipStreamer.Stop()
+			}
+			if err != nil {
+				// ffmpeg can exit non-zero even after writing a valid file —
+				// notably when the live PCM pipe tears down on 'q'. Treat as a
+				// warning; if the file is corrupt the batch step fails loudly.
+				fmt.Fprintf(os.Stderr, "Warning: recording exited with error: %v\n", err)
+			}
+			savedPaths = append(savedPaths, outputPath)
+			fmt.Println(outputPath)
+			if _, perr := promoteLiveTranscript(outputPath); perr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: failed to promote live transcript: %v\n", perr)
 			}
 		}
 
