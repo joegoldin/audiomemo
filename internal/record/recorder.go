@@ -30,15 +30,22 @@ type RecordOpts struct {
 }
 
 type Recorder struct {
-	cmd            *exec.Cmd
-	stdin          io.WriteCloser
-	Level          chan float64
-	Done           chan error
-	done           chan struct{} // closed when ffmpeg exits; safe for multiple waiters
-	exitErr        error
-	muted          bool
-	sourceOutputID int
-	PCMReader      io.ReadCloser
+	cmd       *exec.Cmd
+	stdin     io.WriteCloser
+	Level     chan float64
+	Done      chan error
+	done      chan struct{} // closed when ffmpeg exits; safe for multiple waiters
+	exitErr   error
+	PCMReader io.ReadCloser
+
+	// muteMu guards muted and sourceOutputIDs: the discovery goroutine writes
+	// the IDs while the TUI goroutine reads them from ToggleMute/Stop.
+	muteMu          sync.Mutex
+	muted           bool
+	sourceOutputIDs []int
+	// expectedSources is how many source-outputs ffmpeg should open — one per
+	// input device. Discovery keeps polling until it has them all.
+	expectedSources int
 
 	stderrMu   sync.Mutex
 	stderrTail []string
@@ -244,13 +251,17 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		return nil, err
 	}
 
+	expectedSources := len(opts.Devices)
+	if expectedSources < 1 {
+		expectedSources = 1
+	}
 	r := &Recorder{
-		cmd:            cmd,
-		stdin:          stdin,
-		Level:          make(chan float64, 10),
-		Done:           make(chan error, 1),
-		done:           make(chan struct{}),
-		sourceOutputID: -1,
+		cmd:             cmd,
+		stdin:           stdin,
+		Level:           make(chan float64, 10),
+		Done:            make(chan error, 1),
+		done:            make(chan struct{}),
+		expectedSources: expectedSources,
 	}
 
 	// Using a Writer (rather than StderrPipe + goroutine) lets cmd.Wait()
@@ -274,7 +285,7 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		r.PCMReader = pcmReadEnd
 	}
 
-	go r.discoverSourceOutput()
+	go r.discoverSourceOutputs()
 	go func() {
 		exitErr := cmd.Wait()
 		close(r.Level)
@@ -347,40 +358,88 @@ func (r *Recorder) StderrTail() string {
 	return strings.Join(r.stderrTail, "\n")
 }
 
-// ToggleMute toggles per-stream mute on the ffmpeg PulseAudio source-output.
+// ToggleMute toggles mute across every PulseAudio source-output this
+// recording owns. A device group records N inputs through one ffmpeg process,
+// so muting only the first would leave the rest still capturing.
 func (r *Recorder) ToggleMute() {
+	r.muteMu.Lock()
 	r.muted = !r.muted
-	if r.sourceOutputID >= 0 {
-		muteSourceOutput(r.sourceOutputID, r.muted)
+	muted := r.muted
+	ids := append([]int(nil), r.sourceOutputIDs...)
+	r.muteMu.Unlock()
+
+	for _, id := range ids {
+		muteSourceOutputFn(id, muted)
 	}
 }
 
 // IsMuted returns whether the recorder is currently muted.
 func (r *Recorder) IsMuted() bool {
+	r.muteMu.Lock()
+	defer r.muteMu.Unlock()
 	return r.muted
 }
 
-// discoverSourceOutput finds the PulseAudio source-output for this recorder's
-// ffmpeg process. Called in a goroutine after Start.
-func (r *Recorder) discoverSourceOutput() {
+// setSourceOutputIDs records the discovered source-outputs, applying the
+// current mute state to any that appeared after the user already hit mute.
+func (r *Recorder) setSourceOutputIDs(ids []int) {
+	r.muteMu.Lock()
+	known := make(map[int]struct{}, len(r.sourceOutputIDs))
+	for _, id := range r.sourceOutputIDs {
+		known[id] = struct{}{}
+	}
+	var fresh []int
+	for _, id := range ids {
+		if _, seen := known[id]; !seen {
+			fresh = append(fresh, id)
+		}
+	}
+	r.sourceOutputIDs = append([]int(nil), ids...)
+	muted := r.muted
+	r.muteMu.Unlock()
+
+	if muted {
+		for _, id := range fresh {
+			muteSourceOutputFn(id, true)
+		}
+	}
+}
+
+// discoverSourceOutputs finds the PulseAudio source-outputs for this
+// recorder's ffmpeg process. Called in a goroutine after Start. Inputs connect
+// one at a time, so it keeps polling until every expected source-output has
+// appeared, then settles for whatever it found.
+func (r *Recorder) discoverSourceOutputs() {
 	if r.cmd.Process == nil {
 		return
 	}
 	pid := r.cmd.Process.Pid
-	for i := 0; i < 10; i++ {
-		id, err := findSourceOutputByPID(pid)
-		if err == nil {
-			r.sourceOutputID = id
-			return
+	want := r.expectedSources
+	if want < 1 {
+		want = 1
+	}
+	for i := 0; i < 20; i++ {
+		if ids, err := findSourceOutputsByPID(pid); err == nil {
+			r.setSourceOutputIDs(ids)
+			if len(ids) >= want {
+				return
+			}
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
 }
 
 func (r *Recorder) Stop() {
-	if r.muted && r.sourceOutputID >= 0 {
-		muteSourceOutput(r.sourceOutputID, false)
-		r.muted = false
+	r.muteMu.Lock()
+	wasMuted := r.muted
+	ids := append([]int(nil), r.sourceOutputIDs...)
+	r.muted = false
+	r.muteMu.Unlock()
+
+	if wasMuted {
+		for _, id := range ids {
+			muteSourceOutputFn(id, false)
+		}
 	}
 	r.stdin.Write([]byte("q"))
 	r.stdin.Close()
