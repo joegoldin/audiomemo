@@ -17,7 +17,7 @@ audiomemo - record audio and transcribe it
     audiomemo device [command]
 
     record [flags]
-    rec [flags]
+    rect [flags]
     transcribe [flags] <file>
 
 ## DESCRIPTION
@@ -25,12 +25,12 @@ audiomemo - record audio and transcribe it
 CLI for recording audio from PulseAudio/AVFoundation devices and
 transcribing via local whisper or cloud APIs (ElevenLabs, Deepgram, OpenAI, Mistral).
 
-The binary dispatches on `argv[0]`: symlinks named `record`, `rec`, or
+The binary dispatches on `argv[0]`: symlinks named `record`, `rect`, or
 `transcribe` invoke those subcommands directly.
 
 ## COMMANDS
 
-### record (alias: rec)
+### record (alias: rect)
 
 Record audio with a live TUI showing a streaming transcript. The cursor at
 the end of the transcript doubles as a VU meter (height and color track the

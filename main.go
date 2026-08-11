@@ -10,7 +10,7 @@ import (
 func main() {
 	name := filepath.Base(os.Args[0])
 	switch name {
-	case "record", "rec":
+	case "record", "rect":
 		cmd.ExecuteRecord()
 	case "transcribe":
 		cmd.ExecuteTranscribe()

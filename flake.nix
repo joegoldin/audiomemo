@@ -23,7 +23,7 @@
           nativeBuildInputs = [ pkgs.makeWrapper pkgs.installShellFiles ];
           postInstall = ''
             ln -s $out/bin/audiomemo $out/bin/record
-            ln -s $out/bin/audiomemo $out/bin/rec
+            ln -s $out/bin/audiomemo $out/bin/rect
             ln -s $out/bin/audiomemo $out/bin/transcribe
             wrapProgram $out/bin/audiomemo \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg pkgs.whisper-cpp ]}

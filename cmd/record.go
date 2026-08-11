@@ -36,7 +36,7 @@ var (
 
 var recordCmd = &cobra.Command{
 	Use:     "record [flags] [name ...]",
-	Aliases: []string{"rec"},
+	Aliases: []string{"rect"},
 	Short:   "Record audio from microphone",
 	Long: `Record audio from your microphone with a live transcript view. The cursor
 at the end of the transcript doubles as a VU meter, changing height and color
@@ -53,7 +53,7 @@ Multiple words are joined with underscores.
 Examples:
   record
   record meeting
-  rec standup -t
+  rect standup -t
   record -d 5m --no-tui
   record -D "Built-in Microphone" -t --transcribe-args="--backend deepgram"`,
 	Args: cobra.ArbitraryArgs,

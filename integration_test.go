@@ -609,9 +609,9 @@ func TestBinaryDispatchRecord(t *testing.T) {
 	}
 }
 
-func TestBinaryDispatchRec(t *testing.T) {
+func TestBinaryDispatchRect(t *testing.T) {
 	dir := t.TempDir()
-	symlink := filepath.Join(dir, "rec")
+	symlink := filepath.Join(dir, "rect")
 	if err := os.Symlink(testBinary, symlink); err != nil {
 		t.Fatal(err)
 	}
@@ -620,10 +620,10 @@ func TestBinaryDispatchRec(t *testing.T) {
 	var outBuf bytes.Buffer
 	cmd.Stdout = &outBuf
 	if err := cmd.Run(); err != nil {
-		t.Fatalf("symlink rec --help failed: %v", err)
+		t.Fatalf("symlink rect --help failed: %v", err)
 	}
 	if !strings.Contains(outBuf.String(), "Record audio") {
-		t.Error("symlink 'rec' should show record help")
+		t.Error("symlink 'rect' should show record help")
 	}
 }
 
