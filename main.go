@@ -12,6 +12,8 @@ func main() {
 	switch name {
 	case "record", "rect":
 		cmd.ExecuteRecord()
+	case "recw":
+		cmd.ExecuteRecordWhisper()
 	case "transcribe":
 		cmd.ExecuteTranscribe()
 	default:

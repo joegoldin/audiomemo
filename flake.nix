@@ -6,8 +6,14 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         vendorHash = "sha256-++rCNa9MkMYY5RDkHijb5GFc1Y/zkGMo1UmzdQGpOT8=";
@@ -20,13 +26,22 @@
           version = "0.1.0";
           src = ./.;
           inherit vendorHash;
-          nativeBuildInputs = [ pkgs.makeWrapper pkgs.installShellFiles ];
+          nativeBuildInputs = [
+            pkgs.makeWrapper
+            pkgs.installShellFiles
+          ];
           postInstall = ''
             ln -s $out/bin/audiomemo $out/bin/record
             ln -s $out/bin/audiomemo $out/bin/rect
+            ln -s $out/bin/audiomemo $out/bin/recw
             ln -s $out/bin/audiomemo $out/bin/transcribe
             wrapProgram $out/bin/audiomemo \
-              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.ffmpeg pkgs.whisper-cpp ]}
+              --prefix PATH : ${
+                pkgs.lib.makeBinPath [
+                  pkgs.ffmpeg
+                  pkgs.whisper-cpp
+                ]
+              }
 
             installShellCompletion --cmd audiomemo \
               --bash <($out/bin/audiomemo completion bash) \
@@ -44,7 +59,10 @@
           version = "0.1.0";
           src = ./.;
           inherit vendorHash;
-          nativeBuildInputs = [ pkgs.ffmpeg pkgs.whisper-cpp ];
+          nativeBuildInputs = [
+            pkgs.ffmpeg
+            pkgs.whisper-cpp
+          ];
           doCheck = true;
           preCheck = ''
             export HOME=/tmp/audiomemo-test-home
@@ -57,10 +75,16 @@
         };
 
         devShells.default = pkgs.mkShell {
-          buildInputs = [ pkgs.go pkgs.gopls pkgs.ffmpeg pkgs.whisper-cpp ];
+          buildInputs = [
+            pkgs.go
+            pkgs.gopls
+            pkgs.ffmpeg
+            pkgs.whisper-cpp
+          ];
         };
       }
-    ) // {
+    )
+    // {
       overlays.default = final: prev: {
         audiomemo = self.packages.${final.system}.audiomemo;
       };

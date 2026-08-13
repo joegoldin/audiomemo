@@ -18,20 +18,22 @@ import (
 )
 
 var (
-	rDuration       string
-	rFormat         string
-	rDevice         string
-	rListDevices    bool
-	rSampleRate     int
-	rChannels       int
-	rName           string
-	rTemp           bool
-	rTranscribe     bool
-	rTranscribeArgs string
-	rNoTUI          bool
-	rVerbose        bool
-	rConfig         string
-	rClips          bool
+	rDuration        string
+	rFormat          string
+	rDevice          string
+	rListDevices     bool
+	rSampleRate      int
+	rChannels        int
+	rName            string
+	rTemp            bool
+	rTranscribe      bool
+	rTranscribeArgs  string
+	rNoTUI           bool
+	rVerbose         bool
+	rConfig          string
+	rClips           bool
+	rNoLive          bool
+	rWhisperShortcut bool
 )
 
 var recordCmd = &cobra.Command{
@@ -43,9 +45,10 @@ at the end of the transcript doubles as a VU meter, changing height and color
 with the mic level.
 
 Live transcription streams automatically whenever an ElevenLabs API key is
-configured. Press q to stop and keep the live transcript at <name>.txt; press
-Q to stop and additionally run the higher-quality batch transcription, which
-overwrites <name>.txt (the live preview is kept at <name>-live.txt either way).
+configured unless --no-live-transcription is passed. Press q to stop and keep
+the live transcript at <name>.txt; press Q to stop and additionally run the
+higher-quality batch transcription, which overwrites <name>.txt (the live
+preview is kept at <name>-live.txt either way).
 
 An optional name can be passed as positional arguments to label the recording.
 Multiple words are joined with underscores.
@@ -54,6 +57,7 @@ Examples:
   record
   record meeting
   rect standup -t
+  recw private notes
   record -d 5m --no-tui
   record -D "Built-in Microphone" -t --transcribe-args="--backend deepgram"`,
 	Args: cobra.ArbitraryArgs,
@@ -75,6 +79,7 @@ func init() {
 	recordCmd.Flags().BoolVarP(&rVerbose, "verbose", "v", false, "verbose output (passed to transcribe)")
 	recordCmd.Flags().StringVar(&rConfig, "config", "", "config file path")
 	recordCmd.Flags().BoolVarP(&rClips, "clips", "C", false, "clips mode: record multiple clips sequentially")
+	recordCmd.Flags().BoolVar(&rNoLive, "no-live-transcription", false, "disable live transcription while recording")
 }
 
 func ExecuteRecord() {
@@ -82,6 +87,17 @@ func ExecuteRecord() {
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
+}
+
+// ExecuteRecordWhisper runs the recw shortcut: record without live
+// transcription, then batch-transcribe using only a local Whisper backend.
+func ExecuteRecordWhisper() {
+	rWhisperShortcut = true
+	ExecuteRecord()
+}
+
+func resolveRecordTranscriptionMode(noLiveFlag, whisperShortcut, transcribeFlag bool) (liveDisabled, batchTranscribe bool) {
+	return noLiveFlag || whisperShortcut, transcribeFlag || whisperShortcut
 }
 
 func runRecord(cmd *cobra.Command, args []string) error {
@@ -203,15 +219,19 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to create output dir: %w", err)
 	}
 
+	liveDisabled, shouldTranscribe := resolveRecordTranscriptionMode(rNoLive, rWhisperShortcut, rTranscribe)
+
 	if rClips {
-		return runClips(cfg, name, format, sampleRate, channels, devices, deviceLabel, outputDir)
+		return runClips(cfg, name, format, sampleRate, channels, devices, deviceLabel, outputDir, liveDisabled)
 	}
 
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
 
 	var streamer *transcribe.Streamer
 	streamNote := ""
-	if cfg.Transcribe.ElevenLabs.APIKey != "" {
+	if liveDisabled {
+		streamNote = "live transcription disabled"
+	} else if cfg.Transcribe.ElevenLabs.APIKey != "" {
 		streamer = transcribe.NewStreamer(
 			cfg.Transcribe.ElevenLabs.APIKey,
 			cfg.Transcribe.ElevenLabs.StoreInCloud,
@@ -249,7 +269,6 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	shouldTranscribe := rTranscribe
 	var model *tui.Model
 	if rNoTUI {
 		fmt.Fprintf(os.Stderr, "Recording to %s (Ctrl+C to stop)...\n", outputPath)
@@ -309,11 +328,18 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-func runClips(cfg *config.Config, name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string) error {
+func runClips(cfg *config.Config, name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string, liveDisabled bool) error {
 	var savedPaths []string
 	clipNumber := 1
 	savedMessage := ""
-	apiKey := cfg.Transcribe.ElevenLabs.APIKey
+	apiKey := ""
+	streamNote := "live transcription disabled"
+	if !liveDisabled {
+		apiKey = cfg.Transcribe.ElevenLabs.APIKey
+		if apiKey == "" {
+			streamNote = "live transcription unavailable: no ElevenLabs API key configured"
+		}
+	}
 
 	for {
 		outputPath := filepath.Join(outputDir, record.GenerateClipFilename(format, name, clipNumber))
@@ -339,7 +365,7 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 				return nil, nil, "", err
 			}
 			if apiKey == "" {
-				return rec, nil, "live transcription unavailable: no ElevenLabs API key configured", nil
+				return rec, nil, streamNote, nil
 			}
 			s := transcribe.NewStreamer(apiKey, cfg.Transcribe.ElevenLabs.StoreInCloud)
 			if err := s.Start(context.Background(), rec.PCMReader, livePath); err != nil {
@@ -419,19 +445,51 @@ func runPostTranscribe(audioPath string) error {
 		self = "transcribe"
 	}
 
-	args := []string{}
-	if rVerbose {
-		args = append(args, "--verbose")
+	args, err := buildPostTranscribeArgs(
+		audioPath,
+		rTranscribeArgs,
+		rVerbose,
+		rWhisperShortcut,
+		exec.LookPath,
+	)
+	if err != nil {
+		return err
 	}
-	if rTranscribeArgs != "" {
-		args = append(args, strings.Fields(rTranscribeArgs)...)
-	}
-	args = append(args, audioPath)
 
 	transcribeCmd := exec.Command(self, append([]string{"transcribe"}, args...)...)
 	transcribeCmd.Stdout = os.Stdout
 	transcribeCmd.Stderr = os.Stderr
 	return transcribeCmd.Run()
+}
+
+func buildPostTranscribeArgs(audioPath, transcribeArgs string, verbose, localWhisperOnly bool, lookPath func(string) (string, error)) ([]string, error) {
+	args := []string{}
+	if verbose {
+		args = append(args, "--verbose")
+	}
+	if transcribeArgs != "" {
+		args = append(args, strings.Fields(transcribeArgs)...)
+	}
+	if localWhisperOnly {
+		backend, err := preferredLocalWhisperBackend(lookPath)
+		if err != nil {
+			return nil, err
+		}
+		// Append this after user-supplied transcribe args so recw cannot be
+		// redirected to a cloud backend.
+		args = append(args, "--backend", backend)
+	}
+	return append(args, audioPath), nil
+}
+
+func preferredLocalWhisperBackend(lookPath func(string) (string, error)) (string, error) {
+	if _, err := lookPath("whisper-cli"); err == nil {
+		return "whisper-cpp", nil
+	}
+	if _, err := lookPath("whisper"); err == nil {
+		return "whisper", nil
+	}
+	return "", fmt.Errorf("recw requires a local Whisper backend: install whisper-cpp (whisper-cli) or whisper")
 }
 
 // promoteLiveTranscript copies the live transcript (<base>-live.txt) to the

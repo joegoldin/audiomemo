@@ -18,6 +18,7 @@ audiomemo - record audio and transcribe it
 
     record [flags]
     rect [flags]
+    recw [flags]
     transcribe [flags] <file>
 
 ## DESCRIPTION
@@ -25,8 +26,8 @@ audiomemo - record audio and transcribe it
 CLI for recording audio from PulseAudio/AVFoundation devices and
 transcribing via local whisper or cloud APIs (ElevenLabs, Deepgram, OpenAI, Mistral).
 
-The binary dispatches on `argv[0]`: symlinks named `record`, `rect`, or
-`transcribe` invoke those subcommands directly.
+The binary dispatches on `argv[0]`: symlinks named `record`, `rect`, `recw`,
+or `transcribe` invoke those commands directly.
 
 ## COMMANDS
 
@@ -46,6 +47,7 @@ When run without `-D`, an interactive device picker is shown first.
         --temp                   save to temp directory
     -t, --transcribe             always run batch transcription on exit
                                  (as if quitting with Q)
+        --no-live-transcription  disable live transcription while recording
         --transcribe-args string extra args passed to transcribe
     -v, --verbose                verbose output (passed to transcribe)
     -L, --list-devices           list devices and exit
@@ -60,6 +62,14 @@ TUI keybindings during recording:
     ↑/↓         scroll transcript
     pgup/pgdn   page through transcript history
     end          jump to latest transcript
+
+### recw
+
+Record without live transcription, then batch-transcribe entirely locally.
+`recw` prefers `whisper-cli` (whisper.cpp), falls back to the Python `whisper`
+binary when whisper.cpp is unavailable, and fails rather than using a cloud
+backend when neither local binary is installed. It accepts the same recording
+flags and positional name as `record`.
 
 ### transcribe
 
@@ -170,9 +180,9 @@ Multi-device recording mixes all inputs via ffmpeg amix.
 ## LIVE TRANSCRIPTION
 
 Whenever an ElevenLabs API key is configured, audio is streamed in realtime
-to ElevenLabs for live speech-to-text — no flag needed. The transcript is the
-main content of the recording TUI; the cursor at the insertion point doubles
-as a VU meter.
+to ElevenLabs for live speech-to-text unless `--no-live-transcription` is
+passed. The transcript is the main content of the recording TUI; the cursor at
+the insertion point doubles as a VU meter.
 
 - Text appears as you talk (partial results in gray, committed text in white)
 - Auto-scrolls to show latest text; scroll up to browse history
@@ -182,6 +192,8 @@ as a VU meter.
   (or passing `-t`) then overwrites it with the batch result
 - If no ElevenLabs key is configured, recording shows a lone VU cursor and
   transcripts are only produced by `Q` / `-t` batch runs
+- `recw` never starts live transcription and always runs a local Whisper batch
+  transcription after recording
 
 ## INSTALL
 
@@ -223,6 +235,9 @@ The nix package wraps the binary with ffmpeg and whisper-cpp in PATH.
 
     # Record with device picker, transcribe after
     record -t
+
+    # Record privately, then transcribe locally with whisper.cpp or whisper
+    recw private notes
 
     # Record specific device, 5 minute limit, headless
     record -D mic -d 5m --no-tui

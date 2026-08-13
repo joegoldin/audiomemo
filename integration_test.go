@@ -516,7 +516,7 @@ func TestRecordHelp(t *testing.T) {
 		t.Fatalf("record --help failed: %v", err)
 	}
 	for _, flag := range []string{"--duration", "--format", "--device", "--list-devices",
-		"--sample-rate", "--channels", "--name", "--temp", "--transcribe", "--no-tui"} {
+		"--sample-rate", "--channels", "--name", "--temp", "--transcribe", "--no-live-transcription", "--no-tui"} {
 		if !strings.Contains(stdout, flag) {
 			t.Errorf("help should mention %s", flag)
 		}
@@ -624,6 +624,24 @@ func TestBinaryDispatchRect(t *testing.T) {
 	}
 	if !strings.Contains(outBuf.String(), "Record audio") {
 		t.Error("symlink 'rect' should show record help")
+	}
+}
+
+func TestBinaryDispatchRecw(t *testing.T) {
+	dir := t.TempDir()
+	symlink := filepath.Join(dir, "recw")
+	if err := os.Symlink(testBinary, symlink); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(symlink, "--help")
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("symlink recw --help failed: %v", err)
+	}
+	if !strings.Contains(outBuf.String(), "Record audio") {
+		t.Error("symlink 'recw' should show record help")
 	}
 }
 

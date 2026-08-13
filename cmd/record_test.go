@@ -1,10 +1,115 @@
 package cmd
 
 import (
+	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
+
+func TestResolveRecordTranscriptionMode(t *testing.T) {
+	tests := []struct {
+		name                string
+		noLiveFlag          bool
+		whisperShortcut     bool
+		transcribeFlag      bool
+		wantLiveDisabled    bool
+		wantBatchTranscribe bool
+	}{
+		{name: "ordinary recording keeps defaults"},
+		{
+			name:             "no-live flag disables live transcription",
+			noLiveFlag:       true,
+			wantLiveDisabled: true,
+		},
+		{
+			name:                "recw disables live and enables batch",
+			whisperShortcut:     true,
+			wantLiveDisabled:    true,
+			wantBatchTranscribe: true,
+		},
+		{
+			name:                "transcribe flag enables batch",
+			transcribeFlag:      true,
+			wantBatchTranscribe: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			liveDisabled, batchTranscribe := resolveRecordTranscriptionMode(
+				tt.noLiveFlag,
+				tt.whisperShortcut,
+				tt.transcribeFlag,
+			)
+			if liveDisabled != tt.wantLiveDisabled {
+				t.Errorf("liveDisabled = %v, want %v", liveDisabled, tt.wantLiveDisabled)
+			}
+			if batchTranscribe != tt.wantBatchTranscribe {
+				t.Errorf("batchTranscribe = %v, want %v", batchTranscribe, tt.wantBatchTranscribe)
+			}
+		})
+	}
+}
+
+func TestBuildPostTranscribeArgsRecwPrefersWhisperCPPAndForcesLocal(t *testing.T) {
+	lookPath := func(name string) (string, error) {
+		if name == "whisper-cli" {
+			return "/usr/bin/whisper-cli", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	got, err := buildPostTranscribeArgs(
+		"memo.ogg",
+		"--language en --backend elevenlabs",
+		false,
+		true,
+		lookPath,
+	)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{
+		"--language", "en",
+		"--backend", "elevenlabs",
+		"--backend", "whisper-cpp",
+		"memo.ogg",
+	}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildPostTranscribeArgsRecwFallsBackToWhisper(t *testing.T) {
+	lookPath := func(name string) (string, error) {
+		if name == "whisper" {
+			return "/usr/bin/whisper", nil
+		}
+		return "", errors.New("not found")
+	}
+
+	got, err := buildPostTranscribeArgs("memo.ogg", "", true, true, lookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--verbose", "--backend", "whisper", "memo.ogg"}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("args = %#v, want %#v", got, want)
+	}
+}
+
+func TestBuildPostTranscribeArgsRecwRequiresLocalWhisper(t *testing.T) {
+	lookPath := func(string) (string, error) {
+		return "", errors.New("not found")
+	}
+
+	_, err := buildPostTranscribeArgs("memo.ogg", "", false, true, lookPath)
+	if err == nil {
+		t.Fatal("expected an error when neither whisper-cli nor whisper is available")
+	}
+}
 
 func TestPromoteLiveTranscript(t *testing.T) {
 	dir := t.TempDir()
