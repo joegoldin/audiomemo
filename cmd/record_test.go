@@ -67,6 +67,7 @@ func TestBuildPostTranscribeArgsRecwPrefersWhisperCPPAndForcesLocal(t *testing.T
 		"--language en --backend elevenlabs",
 		false,
 		true,
+		false,
 		lookPath,
 	)
 	if err != nil {
@@ -91,7 +92,7 @@ func TestBuildPostTranscribeArgsRecwFallsBackToWhisper(t *testing.T) {
 		return "", errors.New("not found")
 	}
 
-	got, err := buildPostTranscribeArgs("memo.ogg", "", true, true, lookPath)
+	got, err := buildPostTranscribeArgs("memo.ogg", "", true, true, false, lookPath)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -106,7 +107,7 @@ func TestBuildPostTranscribeArgsRecwRequiresLocalWhisper(t *testing.T) {
 		return "", errors.New("not found")
 	}
 
-	_, err := buildPostTranscribeArgs("memo.ogg", "", false, true, lookPath)
+	_, err := buildPostTranscribeArgs("memo.ogg", "", false, true, false, lookPath)
 	if err == nil {
 		t.Fatal("expected an error when neither whisper-cli nor whisper is available")
 	}
@@ -244,5 +245,46 @@ func TestReportLiveUnavailable(t *testing.T) {
 					tc.note, tc.streaming, tc.liveDisabled, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestStreamSuppressesDiarization(t *testing.T) {
+	lookPath := func(string) (string, error) { return "", errors.New("not found") }
+
+	got, err := buildPostTranscribeArgs("memo.ogg", "", false, false, true, lookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"--diarize=false", "memo.ogg"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("streamed args = %v, want %v", got, want)
+	}
+}
+
+func TestStreamKeepsAnExplicitDiarizeChoice(t *testing.T) {
+	lookPath := func(string) (string, error) { return "", errors.New("not found") }
+
+	for _, spelling := range []string{"--diarize", "--diarize=true", "--diarize=false"} {
+		got, err := buildPostTranscribeArgs("memo.ogg", spelling, false, false, true, lookPath)
+		if err != nil {
+			t.Fatal(err)
+		}
+		want := []string{spelling, "memo.ogg"}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("with %q: args = %v, want %v", spelling, got, want)
+		}
+	}
+}
+
+func TestWithoutStreamDiarizationIsUntouched(t *testing.T) {
+	lookPath := func(string) (string, error) { return "", errors.New("not found") }
+
+	got, err := buildPostTranscribeArgs("memo.ogg", "", false, false, false, lookPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []string{"memo.ogg"}
+	if !reflect.DeepEqual(got, want) {
+		t.Errorf("non-streamed args = %v, want %v; the TUI path keeps the config default", got, want)
 	}
 }

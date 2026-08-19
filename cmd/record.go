@@ -518,7 +518,7 @@ func newPostTranscribeCmd(audioPath string) (*exec.Cmd, []string, error) {
 	if err != nil {
 		self = "transcribe"
 	}
-	args, err := buildPostTranscribeArgs(audioPath, rTranscribeArgs, rVerbose, rWhisperShortcut, exec.LookPath)
+	args, err := buildPostTranscribeArgs(audioPath, rTranscribeArgs, rVerbose, rWhisperShortcut, rStream, exec.LookPath)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -551,10 +551,32 @@ func runPostTranscribeCapture(audioPath string) (string, []string, error) {
 	return strings.TrimRight(out.String(), "\n"), args, err
 }
 
-func buildPostTranscribeArgs(audioPath, transcribeArgs string, verbose, localWhisperOnly bool, lookPath func(string) (string, error)) ([]string, error) {
+// mentionsDiarize reports whether the caller already decided about speaker
+// labels, in any of the spellings the flag package accepts.
+func mentionsDiarize(transcribeArgs string) bool {
+	for _, f := range strings.Fields(transcribeArgs) {
+		if f == "--diarize" || strings.HasPrefix(f, "--diarize=") {
+			return true
+		}
+	}
+	return false
+}
+
+func buildPostTranscribeArgs(audioPath, transcribeArgs string, verbose, localWhisperOnly, streaming bool, lookPath func(string) (string, error)) ([]string, error) {
 	args := []string{}
 	if verbose {
 		args = append(args, "--verbose")
+	}
+	// A stream consumer is feeding the text somewhere it will be used as
+	// prose: an editor, a prompt, a note. Speaker labels are noise there, and
+	// both cloud backends default Diarize to true in config, so the label
+	// arrives without anyone asking for it.
+	//
+	// This goes ahead of the user's own args so `--transcribe-args "--diarize"`
+	// still wins, which is the escape hatch for the rare streamed recording of
+	// an actual conversation.
+	if streaming && !mentionsDiarize(transcribeArgs) {
+		args = append(args, "--diarize=false")
 	}
 	if transcribeArgs != "" {
 		args = append(args, strings.Fields(transcribeArgs)...)
