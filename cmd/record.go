@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -299,10 +300,14 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	var streamStartErr error
 	if streamer != nil {
 		transcriptPath := liveTranscriptPathFor(outputPath)
 		if err := streamer.Start(context.Background(), rec.PCMReader, transcriptPath); err != nil {
-			fmt.Fprintf(os.Stderr, "Warning: live transcription failed to start: %v\n", err)
+			if !rStream {
+				fmt.Fprintf(os.Stderr, "Warning: live transcription failed to start: %v\n", err)
+			}
+			streamStartErr = err
 			streamNote = fmt.Sprintf("live transcription unavailable: %v", err)
 			streamer = nil
 			// ffmpeg was started with the PCM pipe output and nothing else will
@@ -310,10 +315,18 @@ func runRecord(cmd *cobra.Command, args []string) error {
 			// pipe writes (which would freeze the primary encoded output too).
 			go io.Copy(io.Discard, rec.PCMReader)
 		}
+	} else if streamNote != "" && rStream {
+		// "no ElevenLabs API key configured" is the note the TUI shows; under
+		// --stream the same fact reaches the consumer as an error event.
+		streamStartErr = errors.New(streamNote)
 	}
 
 	var model *tui.Model
-	if rNoTUI {
+	if rStream {
+		// The start event carries the same facts as the stderr line the plain
+		// headless path prints, so that line is redundant here.
+		return runRecordStream(cfg, opts, rec, streamer, streamStartErr, shouldTranscribe)
+	} else if rNoTUI {
 		fmt.Fprintf(os.Stderr, "Recording to %s (Ctrl+C to stop)...\n", outputPath)
 		if err := <-rec.Done; err != nil {
 			return err
