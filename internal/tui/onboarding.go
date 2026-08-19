@@ -45,7 +45,7 @@ type onboardModel struct {
 
 // RunOnboarding launches the first-time onboarding TUI. It returns whether
 // onboarding completed successfully (a device was selected and saved).
-func RunOnboarding(cfg *config.Config, configPath string) (completed bool, err error) {
+func RunOnboarding(cfg *config.Config, configPath string, opts ...tea.ProgramOption) (completed bool, err error) {
 	if cfg.Devices == nil {
 		cfg.Devices = map[string]string{}
 	}
@@ -60,7 +60,7 @@ func RunOnboarding(cfg *config.Config, configPath string) (completed bool, err e
 		aliasInput: newSimpleInput("alias (optional)"),
 	}
 
-	p := tea.NewProgram(m, tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, append([]tea.ProgramOption{tea.WithMouseCellMotion()}, opts...)...)
 	finalModel, err := p.Run()
 	if err != nil {
 		return false, err

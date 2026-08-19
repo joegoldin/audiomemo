@@ -209,7 +209,7 @@ func emitFinal(em *stream.Emitter, cfg *config.Config, audioPath string, streame
 	transcriptPath := transcriptPathFor(audioPath, transcribe.FormatText)
 
 	if batchTranscribe {
-		text, args, err := runPostTranscribeCapture(audioPath)
+		text, args, err := runPostTranscribeCapture(audioPath, true)
 		if err != nil {
 			em.Error(stream.ScopeTranscribe, false, err)
 		} else if strings.TrimSpace(text) != "" {

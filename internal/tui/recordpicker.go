@@ -59,15 +59,17 @@ type recordPickerModel struct {
 // Entry point
 // ---------------------------------------------------------------------------
 
-// RunRecordPicker launches the device picker TUI for the record command.
-func RunRecordPicker(cfg *config.Config) (RecordPickerResult, error) {
+// RunRecordPicker launches the device picker TUI for the record command. The
+// options let the caller redirect the picker away from stdout, which is not the
+// terminal when the command's output is being piped.
+func RunRecordPicker(cfg *config.Config, opts ...tea.ProgramOption) (RecordPickerResult, error) {
 	m := &recordPickerModel{
 		state:    RPLoading,
 		config:   cfg,
 		selected: map[int]bool{},
 	}
 
-	p := tea.NewProgram(m, tea.WithMouseCellMotion())
+	p := tea.NewProgram(m, append([]tea.ProgramOption{tea.WithMouseCellMotion()}, opts...)...)
 	finalModel, err := p.Run()
 	if err != nil {
 		return RecordPickerResult{Skipped: true}, err

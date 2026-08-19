@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 var testBinary string
@@ -52,6 +53,48 @@ func runWithStdin(t *testing.T, stdinPath string, args ...string) (stdout, stder
 	cmd.Stderr = &errBuf
 	err = cmd.Run()
 	return outBuf.String(), errBuf.String(), err
+}
+
+// runWithStubFFmpeg runs the binary with a stand-in ffmpeg ahead of the real
+// one on PATH, so tests can drive the recorder's own stop conditions without a
+// microphone. loudSeconds is how long the stub "hears" speech before going
+// silent.
+func runWithStubFFmpeg(t *testing.T, loudSeconds string, args ...string) (stdout, stderr string, err error) {
+	t.Helper()
+	stubDir := t.TempDir()
+	build := exec.Command("go", "build", "-o", filepath.Join(stubDir, "ffmpeg"), "./testdata/stubffmpeg")
+	build.Stderr = os.Stderr
+	if buildErr := build.Run(); buildErr != nil {
+		t.Fatalf("failed to build the ffmpeg stub: %v", buildErr)
+	}
+
+	cmd := exec.Command(testBinary, args...)
+	cmd.Env = append(os.Environ(),
+		"PATH="+stubDir+string(os.PathListSeparator)+os.Getenv("PATH"),
+		"STUB_LOUD_SECONDS="+loudSeconds,
+	)
+	var outBuf, errBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	cmd.Stderr = &errBuf
+	err = cmd.Run()
+	return outBuf.String(), errBuf.String(), err
+}
+
+// stubRecordConfig writes a config that keeps a test recording out of the
+// user's real output directory.
+func stubRecordConfig(t *testing.T) (configPath, outputDir string) {
+	t.Helper()
+	dir := t.TempDir()
+	outputDir = filepath.Join(dir, "recordings")
+	if err := os.MkdirAll(outputDir, 0755); err != nil {
+		t.Fatalf("failed to create output dir: %v", err)
+	}
+	configPath = filepath.Join(dir, "config.toml")
+	contents := "onboard_version = 1\n\n[record]\noutput_dir = \"" + outputDir + "\"\n"
+	if err := os.WriteFile(configPath, []byte(contents), 0644); err != nil {
+		t.Fatalf("failed to write config: %v", err)
+	}
+	return configPath, outputDir
 }
 
 func requireWhisperCPP(t *testing.T) {
@@ -515,7 +558,7 @@ func TestRecordHelp(t *testing.T) {
 	if err != nil {
 		t.Fatalf("record --help failed: %v", err)
 	}
-	for _, flag := range []string{"--duration", "--format", "--device", "--list-devices",
+	for _, flag := range []string{"--max-duration", "--format", "--device", "--list-devices",
 		"--sample-rate", "--channels", "--name", "--temp", "--transcribe", "--no-live-transcription", "--no-tui"} {
 		if !strings.Contains(stdout, flag) {
 			t.Errorf("help should mention %s", flag)
@@ -859,5 +902,196 @@ func TestRecordWithoutStreamStillListsDevicesAsText(t *testing.T) {
 		if strings.HasPrefix(strings.TrimSpace(line), "{") {
 			t.Errorf("plain --list-devices emitted JSON: %q", line)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Stdout contract (--print) and unattended stop conditions
+// ---------------------------------------------------------------------------
+
+func TestRecordHelpDocumentsPrintAndStops(t *testing.T) {
+	stdout, _, err := run(t, "record", "--help")
+	if err != nil {
+		t.Fatalf("record --help failed: %v", err)
+	}
+	for _, flag := range []string{"--print", "--max-duration", "--max-silence", "--silence-threshold"} {
+		if !strings.Contains(stdout, flag) {
+			t.Errorf("help should mention %s", flag)
+		}
+	}
+}
+
+func TestRecordRejectsUnknownPrintMode(t *testing.T) {
+	_, stderr, err := run(t, "record", "--print", "transcript")
+	if err == nil {
+		t.Fatal("--print transcript should fail")
+	}
+	// The message has to list the alternatives; the user just guessed wrong.
+	for _, want := range []string{"path", "text", "both", "none"} {
+		if !strings.Contains(stderr, want) {
+			t.Errorf("error should list %q, got %q", want, stderr)
+		}
+	}
+}
+
+func TestRecordPrintRejectedWithStream(t *testing.T) {
+	_, stderr, err := run(t, "record", "--stream", "--print", "text")
+	if err == nil {
+		t.Fatal("--stream --print should fail")
+	}
+	if !strings.Contains(stderr, "--stream") {
+		t.Errorf("stderr should name the conflict, got %q", stderr)
+	}
+}
+
+func TestRecordPrintTextRejectedWithClips(t *testing.T) {
+	_, stderr, err := run(t, "record", "--clips", "notes", "--print", "text")
+	if err == nil {
+		t.Fatal("--clips --print text should fail")
+	}
+	if !strings.Contains(stderr, "--clips") {
+		t.Errorf("stderr should name the conflict, got %q", stderr)
+	}
+}
+
+func TestRecordPrintPathAcceptedWithClips(t *testing.T) {
+	// Accepted at validation, so it fails later for the missing name instead.
+	_, stderr, err := run(t, "record", "--clips", "--print", "path", "--no-tui", "-D", "default")
+	if err == nil {
+		t.Fatal("clips without a name should still fail")
+	}
+	if !strings.Contains(stderr, "requires a name") {
+		t.Errorf("--print path should be accepted with --clips, got %q", stderr)
+	}
+}
+
+func TestRecordRejectsMalformedStopDurations(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+		want string
+	}{
+		{
+			name: "bare number is not a duration",
+			args: []string{"--max-duration", "30"},
+			want: "--max-duration",
+		},
+		{
+			name: "unparseable max-silence",
+			args: []string{"--max-silence", "soon"},
+			want: "--max-silence",
+		},
+		{
+			name: "negative max-duration",
+			args: []string{"--max-duration", "-5s"},
+			want: "--max-duration",
+		},
+		{
+			// The deprecated spelling is still wired up, and its errors name
+			// the flag the user actually typed.
+			name: "deprecated duration alias",
+			args: []string{"--duration", "soon"},
+			want: "--duration",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			stdout, stderr, err := run(t, append([]string{"record"}, tt.args...)...)
+			if err == nil {
+				t.Fatal("malformed duration should fail")
+			}
+			if !strings.Contains(stderr, tt.want) {
+				t.Errorf("stderr should name %s, got %q", tt.want, stderr)
+			}
+			// Nothing may reach stdout: a caller doing `record | copy` would
+			// otherwise put an error message on the clipboard.
+			if stdout != "" {
+				t.Errorf("stdout = %q, want empty", stdout)
+			}
+		})
+	}
+}
+
+func TestRecordStopConditionsAppearInHelpText(t *testing.T) {
+	stdout, _, err := run(t, "record", "--help")
+	if err != nil {
+		t.Fatalf("record --help failed: %v", err)
+	}
+	// The deprecated spelling is hidden from help, so nothing points users at it.
+	if strings.Contains(stdout, "--duration ") {
+		t.Errorf("help should not advertise the deprecated --duration:\n%s", stdout)
+	}
+}
+
+func TestRecordStopsAfterSilence(t *testing.T) {
+	configPath, outputDir := stubRecordConfig(t)
+
+	start := time.Now()
+	stdout, stderr, err := runWithStubFFmpeg(t, "1.0",
+		"record", "--no-tui", "-D", "default", "--no-live-transcription",
+		"--max-silence", "1s", "--print", "path", "--config", configPath, "-n", "silence")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("record failed: %v\nstderr: %s", err, stderr)
+	}
+
+	// One second of speech plus one of silence; the generous ceiling is for
+	// slow CI, and anything near the stub's 60s backstop means it never fired.
+	if elapsed > 20*time.Second {
+		t.Errorf("recording ran %v; --max-silence did not stop it", elapsed)
+	}
+	if !strings.Contains(stderr, "Stopped after") {
+		t.Errorf("stderr should report the silence stop, got %q", stderr)
+	}
+	path := strings.TrimSpace(stdout)
+	if !strings.HasPrefix(path, outputDir) {
+		t.Errorf("stdout = %q, want a path under %s", stdout, outputDir)
+	}
+}
+
+// The silence clock starts at the first sound, so a recording that never hears
+// anything is not cut short while the speaker reaches for the mic.
+func TestRecordSilenceWaitsForSpeech(t *testing.T) {
+	configPath, _ := stubRecordConfig(t)
+
+	start := time.Now()
+	_, stderr, err := runWithStubFFmpeg(t, "0",
+		"record", "--no-tui", "-D", "default", "--no-live-transcription",
+		"--max-silence", "1s", "--max-duration", "3s", "--print", "path",
+		"--config", configPath, "-n", "nospeech")
+	elapsed := time.Since(start)
+	if err != nil {
+		t.Fatalf("record failed: %v\nstderr: %s", err, stderr)
+	}
+
+	// --max-duration is the backstop, and the stub honours it by exiting when
+	// asked; what matters is that silence did not claim the stop.
+	if strings.Contains(stderr, "Stopped after") {
+		t.Errorf("silence stopped a recording with no speech in it: %q", stderr)
+	}
+	// It ran to --max-duration instead, well past the 1s silence limit that
+	// would have ended it had the clock started at t=0.
+	if elapsed < 2*time.Second {
+		t.Errorf("recording ended after %v, before the silence limit could have applied", elapsed)
+	}
+}
+
+func TestRecordPipedStdoutOmitsThePath(t *testing.T) {
+	configPath, outputDir := stubRecordConfig(t)
+
+	// stdout here is a pipe (the test harness captures it), so --print auto
+	// resolves to text. There is no transcript to be had — the stub records
+	// nothing transcribable and live transcription is off — so the path must
+	// not appear on stdout as a consolation prize.
+	stdout, stderr, err := runWithStubFFmpeg(t, "1.0",
+		"record", "--no-tui", "-D", "default", "--no-live-transcription",
+		"--max-duration", "1s", "--transcribe-args", "--backend whisper-cpp",
+		"--config", configPath, "-n", "piped")
+	_ = err // a missing whisper backend fails the batch pass; stdout is the point
+	if strings.Contains(stdout, outputDir) {
+		t.Errorf("piped stdout carried the recording path: %q", stdout)
+	}
+	if !strings.Contains(stderr, "Recording to") {
+		t.Errorf("the path belongs on stderr in headless mode, got %q", stderr)
 	}
 }

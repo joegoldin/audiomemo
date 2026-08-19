@@ -38,8 +38,17 @@ the end of the transcript doubles as a VU meter (height and color track the
 mic level). Live transcription is always on when an ElevenLabs key is set.
 When run without `-D`, an interactive device picker is shown first.
 
+The TUI is drawn on the terminal even when stdout is redirected, so
+`record | pbcopy` shows the interface and pipes the transcript.
+See STDOUT AND PIPING.
+
     -D, --device string          input device name, alias, or group
-    -d, --duration string        max duration (e.g. 5m, 1h30m)
+    -d, --max-duration string    stop after this long (e.g. 30s, 5m, 1h30m)
+        --max-silence string     stop after this much silence (e.g. 5s)
+        --silence-threshold f    dBFS at or below which audio counts as
+                                 silence (default -40)
+        --print string           what to write to stdout: auto, path, text,
+                                 both, none (default auto)
         --format string          output format: ogg, wav, flac, mp3
     -r, --sample-rate int        sample rate in Hz
     -c, --channels int           1=mono, 2=stereo
@@ -51,7 +60,7 @@ When run without `-D`, an interactive device picker is shown first.
         --transcribe-args string extra args passed to transcribe
     -v, --verbose                verbose output (passed to transcribe)
     -L, --list-devices           list devices and exit
-        --no-tui                 headless mode (Ctrl+C to stop)
+        --no-tui                 headless mode
         --stream                 emit newline-delimited JSON on stdout
                                  (implies --no-tui; see STREAMING OUTPUT)
         --config string          config file path
@@ -197,6 +206,58 @@ the insertion point doubles as a VU meter.
 - `recw` never starts live transcription and always runs a local Whisper batch
   transcription after recording
 
+## STDOUT AND PIPING
+
+`record` draws its interface on the terminal and keeps stdout for the thing
+you asked for. Piping it is therefore safe: the TUI goes to `/dev/tty` (or
+stderr if there is no controlling terminal), never into the pipe.
+
+What lands on stdout is `--print`:
+
+    auto   the default: the path when stdout is a terminal, the transcript
+           when it is a pipe. Nobody writes `record | pbcopy` to put a
+           filename on the clipboard.
+    path   always the recording's path, for `transcribe $(record --print path)`
+    text   always the transcript
+    both   the path, then the transcript
+    none   nothing
+
+The transcript `text` emits is the batch result when a batch pass ran, and the
+live transcript otherwise — the same file that ends up at `<name>.txt`. Asking
+for `text` without live transcription running implies a batch pass, since it is
+the only way to produce the words that were requested; speaker labels are
+suppressed for it, as they are for `--stream`, because the text is headed
+somewhere it will be read as prose. Pass `--transcribe-args "--diarize"` to keep
+them.
+
+`--print` cannot be combined with `--stream`, which fills stdout with NDJSON.
+In `--clips` mode stdout stays a list of paths, one per clip, so only `path`
+and `none` are accepted there.
+
+Everything else — the status line, warnings, why a recording stopped — goes to
+stderr, so a captured transcript stays clean.
+
+## UNATTENDED RECORDING
+
+`record` can run with no terminal and no keypress:
+
+    record --no-tui -D mic --max-duration 2m --print text
+
+`--max-duration` bounds the recording. `--max-silence` ends it once the room
+has been quiet for that long, using `--silence-threshold` (default -40 dBFS)
+to decide what counts as quiet. Either may fire; whichever comes first wins,
+and stderr says which did.
+
+The silence clock starts at the first sound above the threshold, not when
+recording begins, so `--max-silence 2s` does not end the take while you are
+still reaching for the mic. A recording that never rises above the threshold
+therefore never trips it — pair the two flags when a run must terminate no
+matter what.
+
+Both work with the TUI too; the interface exits by itself when the recording
+ends. With no terminal to draw on at all, `record` falls back to headless mode
+and says so on stderr, and first-run setup is skipped rather than blocking.
+
 ## STREAMING OUTPUT
 
 `record --stream` writes one JSON object per line to stdout while recording,
@@ -276,7 +337,13 @@ The nix package wraps the binary with ffmpeg and whisper-cpp in PATH.
     recw private notes
 
     # Record specific device, 5 minute limit, headless
-    record -D mic -d 5m --no-tui
+    record -D mic --max-duration 5m --no-tui
+
+    # Dictate into the clipboard: TUI on the terminal, transcript down the pipe
+    rect | pbcopy
+
+    # Unattended: no terminal, no keypress, transcript on stdout
+    record --no-tui -D mic --max-duration 2m --max-silence 5s --print text
 
     # Record group (multi-device), transcribe with ElevenLabs
     record -D zoom -t

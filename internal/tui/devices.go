@@ -171,9 +171,9 @@ func NewDeviceManager(cfg *config.Config, configPath string) *DeviceManager {
 
 // RunDeviceManager is a convenience entry-point that creates a bubbletea
 // program, runs the TUI, and returns any error.
-func RunDeviceManager(cfg *config.Config, configPath string) error {
+func RunDeviceManager(cfg *config.Config, configPath string, opts ...tea.ProgramOption) error {
 	dm := NewDeviceManager(cfg, configPath)
-	p := tea.NewProgram(dm, tea.WithAltScreen(), tea.WithMouseCellMotion())
+	p := tea.NewProgram(dm, append([]tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}, opts...)...)
 	_, err := p.Run()
 	return err
 }

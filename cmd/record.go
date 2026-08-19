@@ -17,6 +17,7 @@ import (
 	"github.com/joegoldin/audiomemo/internal/stream"
 	"github.com/joegoldin/audiomemo/internal/transcribe"
 	"github.com/joegoldin/audiomemo/internal/tui"
+	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -38,6 +39,10 @@ var (
 	rNoLive          bool
 	rWhisperShortcut bool
 	rStream          bool
+	rMaxDuration     string
+	rMaxSilence      string
+	rSilenceDB       float64
+	rPrint           string
 )
 
 var recordCmd = &cobra.Command{
@@ -69,7 +74,12 @@ Examples:
 }
 
 func init() {
-	recordCmd.Flags().StringVarP(&rDuration, "duration", "d", "", "max recording duration (e.g. 5m, 1h30m)")
+	recordCmd.Flags().StringVarP(&rMaxDuration, "max-duration", "d", "", "stop recording after this long (e.g. 30s, 5m, 1h30m)")
+	recordCmd.Flags().StringVar(&rDuration, "duration", "", "deprecated alias for --max-duration")
+	_ = recordCmd.Flags().MarkDeprecated("duration", "use --max-duration")
+	recordCmd.Flags().StringVar(&rMaxSilence, "max-silence", "", "stop recording after this much silence (e.g. 5s)")
+	recordCmd.Flags().Float64Var(&rSilenceDB, "silence-threshold", record.DefaultSilenceThreshold, "dBFS at or below which audio counts as silence")
+	recordCmd.Flags().StringVar(&rPrint, "print", "auto", "what to write to stdout: auto, path, text, both, none")
 	recordCmd.Flags().StringVar(&rFormat, "format", "", "output format (ogg, wav, flac, mp3)")
 	recordCmd.Flags().StringVarP(&rDevice, "device", "D", "", "input device name or index")
 	recordCmd.Flags().BoolVarP(&rListDevices, "list-devices", "L", false, "list available input devices")
@@ -161,6 +171,23 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if err := validateStreamFlags(rStream, rClips, rListDevices); err != nil {
 		return err
 	}
+
+	printFlag, err := parsePrintMode(rPrint)
+	if err != nil {
+		return err
+	}
+	if err := validatePrintFlags(cmd.Flags().Changed("print"), printFlag, rStream, rClips); err != nil {
+		return err
+	}
+
+	stops := stopConditions{Threshold: rSilenceDB}
+	if stops.MaxDuration, err = resolveMaxDuration(rMaxDuration, rDuration); err != nil {
+		return err
+	}
+	if stops.MaxSilence, err = parseMaxSilence(rMaxSilence); err != nil {
+		return err
+	}
+
 	// A bubbletea alternate screen and an NDJSON consumer cannot both own
 	// stdout. Forcing headless mode here also suppresses the interactive
 	// device picker below, which a machine consumer could not answer.
@@ -168,7 +195,26 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		rNoTUI = true
 	}
 
-	if err := maybeOnboard(cfg, rConfig); err != nil {
+	// Every interactive screen — onboarding, the device picker, the recording
+	// TUI — has to agree on where it draws, so the terminal is found once and
+	// before the first of them might run.
+	var ui tuiTarget
+	if !rNoTUI {
+		ui = resolveTUITarget()
+		defer ui.Close()
+		warnTUITarget(ui)
+		if !ui.Available {
+			rNoTUI = true
+		}
+	}
+
+	stdoutMode := resolvePrintMode(printFlag, isatty.IsTerminal(os.Stdout.Fd()), rClips)
+	if rStream {
+		// The NDJSON stream owns stdout; the transcript rides the final event.
+		stdoutMode = printNone
+	}
+
+	if err := maybeOnboard(cfg, rConfig, ui); err != nil {
 		return err
 	}
 
@@ -207,7 +253,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	var deviceLabel string
 
 	if !cmd.Flags().Changed("device") && !rNoTUI {
-		result, err := tui.RunRecordPicker(cfg)
+		result, err := tui.RunRecordPicker(cfg, ui.Options()...)
 		if err != nil {
 			return err
 		}
@@ -278,7 +324,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	liveDisabled, shouldTranscribe := resolveRecordTranscriptionMode(rNoLive, rWhisperShortcut, rTranscribe)
 
 	if rClips {
-		return runClips(cfg, name, format, sampleRate, channels, devices, deviceLabel, outputDir, liveDisabled)
+		return runClips(cfg, name, format, sampleRate, channels, devices, deviceLabel, outputDir, liveDisabled, stops, ui)
 	}
 
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
@@ -296,7 +342,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		streamNote = "live transcription unavailable: no ElevenLabs API key configured"
 	}
 
-	opts := record.RecordOpts{
+	opts := stops.apply(record.RecordOpts{
 		Device:      devices[0],
 		Devices:     devices,
 		DeviceLabel: deviceLabel,
@@ -305,7 +351,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		Channels:    channels,
 		OutputPath:  outputPath,
 		LivePCM:     streamer != nil,
-	}
+	})
 
 	rec, err := record.Start(opts)
 	if err != nil {
@@ -331,13 +377,18 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		streamStartErr = errors.New(streamNote)
 	}
 
+	// Now that it is settled whether live text will arrive, --print text can
+	// be honoured: with no live transcript to fall back on, the batch pass is
+	// the only thing that can produce the words the user asked for.
+	shouldTranscribe = batchNeededForText(stdoutMode, streamer != nil, shouldTranscribe)
+
 	var model *tui.Model
 	if rStream {
 		// The start event carries the same facts as the stderr line the plain
 		// headless path prints, so that line is redundant here.
 		return runRecordStream(cfg, opts, rec, streamer, streamStartErr, shouldTranscribe)
 	} else if rNoTUI {
-		fmt.Fprintf(os.Stderr, "Recording to %s (Ctrl+C to stop)...\n", outputPath)
+		fmt.Fprintf(os.Stderr, "Recording to %s (%s)...\n", outputPath, stops.hint())
 		if err := <-rec.Done; err != nil {
 			return err
 		}
@@ -348,7 +399,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 			model = tui.NewModel(rec, opts)
 			model.SetStreamNote(streamNote)
 		}
-		p := tea.NewProgram(model, tea.WithAltScreen())
+		p := tea.NewProgram(model, ui.Options(tea.WithAltScreen())...)
 		if _, err := p.Run(); err != nil {
 			return err
 		}
@@ -371,6 +422,10 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		streamer.Stop()
 	}
 
+	if rec.StoppedForSilence() {
+		fmt.Fprintf(os.Stderr, "Stopped after %s of silence.\n", stops.MaxSilence)
+	}
+
 	// Promote the live transcript to the canonical <base>.txt so a transcript
 	// always exists. When batch transcription runs next (Q or -t), it
 	// overwrites the canonical file with the higher-quality result.
@@ -380,26 +435,43 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Saved live transcript to %s\n", promoted)
 	}
 
-	// Print just the path to stdout so it can be piped, e.g.:
-	//   transcribe $(record)
-	// Under --stream, stdout carries NDJSON and a bare path line would break
-	// a line-oriented consumer; path travels on the start, final, and end
-	// events instead.
-	if !rStream {
+	// The path goes out before transcription starts, so `record --print path`
+	// answers as soon as the recording is safe on disk.
+	if stdoutMode == printPath || stdoutMode == printBoth {
 		fmt.Println(outputPath)
 	}
 
+	batchText := ""
 	if shouldTranscribe {
 		// Batch transcribe overwrites the promoted live transcript at
 		// <base>.txt with the diarized full result. The live preview is
 		// preserved at <base>-live.txt.
-		return runPostTranscribe(outputPath)
+		if stdoutMode == printPath {
+			// Path mode leaves the batch pass writing straight to stdout, as
+			// it always has: this is the transcript an interactive Q echoes
+			// after the TUI tears down.
+			return runPostTranscribe(outputPath, false)
+		}
+		text, _, err := runPostTranscribeCapture(outputPath, wantsStdoutText(stdoutMode))
+		if err != nil {
+			return err
+		}
+		batchText = text
+	}
+
+	if wantsStdoutText(stdoutMode) {
+		text := resolveStdoutText(batchText, transcriptPathFor(outputPath, transcribe.FormatText), os.ReadFile)
+		if text == "" {
+			fmt.Fprintln(os.Stderr, "Warning: no transcript was produced; recording saved to "+outputPath)
+			return nil
+		}
+		fmt.Println(text)
 	}
 
 	return nil
 }
 
-func runClips(cfg *config.Config, name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string, liveDisabled bool) error {
+func runClips(cfg *config.Config, name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string, liveDisabled bool, stops stopConditions, ui tuiTarget) error {
 	var savedPaths []string
 	clipNumber := 1
 	savedMessage := ""
@@ -415,7 +487,7 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 	for {
 		outputPath := filepath.Join(outputDir, record.GenerateClipFilename(format, name, clipNumber))
 		livePath := liveTranscriptPathFor(outputPath)
-		opts := record.RecordOpts{
+		opts := stops.apply(record.RecordOpts{
 			Device:      devices[0],
 			Devices:     devices,
 			DeviceLabel: deviceLabel,
@@ -424,7 +496,7 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 			Channels:    channels,
 			OutputPath:  outputPath,
 			LivePCM:     apiKey != "",
-		}
+		})
 
 		// Streamers are single-use (Stop closes their channels), so each clip
 		// gets a fresh one. clipStreamer holds the streamer created by
@@ -464,7 +536,7 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 			model = tui.NewClipsModel(startRec, nil, nil, opts, clipNumber, savedMessage)
 		}
 
-		p := tea.NewProgram(model, tea.WithAltScreen())
+		p := tea.NewProgram(model, ui.Options(tea.WithAltScreen())...)
 		if _, err := p.Run(); err != nil {
 			return err
 		}
@@ -492,7 +564,7 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 
 		if model.ShouldTranscribe() {
 			for _, path := range savedPaths {
-				if err := runPostTranscribe(path); err != nil {
+				if err := runPostTranscribe(path, false); err != nil {
 					fmt.Fprintf(os.Stderr, "transcribe %s: %v\n", path, err)
 				}
 			}
@@ -513,20 +585,20 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 // newPostTranscribeCmd builds the batch transcription subprocess and returns
 // the argument list alongside it, so callers can inspect which backend the
 // subprocess will resolve without re-deriving it.
-func newPostTranscribeCmd(audioPath string) (*exec.Cmd, []string, error) {
+func newPostTranscribeCmd(audioPath string, plainText bool) (*exec.Cmd, []string, error) {
 	self, err := os.Executable()
 	if err != nil {
 		self = "transcribe"
 	}
-	args, err := buildPostTranscribeArgs(audioPath, rTranscribeArgs, rVerbose, rWhisperShortcut, rStream, exec.LookPath)
+	args, err := buildPostTranscribeArgs(audioPath, rTranscribeArgs, rVerbose, rWhisperShortcut, plainText, exec.LookPath)
 	if err != nil {
 		return nil, nil, err
 	}
 	return exec.Command(self, append([]string{"transcribe"}, args...)...), args, nil
 }
 
-func runPostTranscribe(audioPath string) error {
-	cmd, _, err := newPostTranscribeCmd(audioPath)
+func runPostTranscribe(audioPath string, plainText bool) error {
+	cmd, _, err := newPostTranscribeCmd(audioPath, plainText)
 	if err != nil {
 		return err
 	}
@@ -535,12 +607,13 @@ func runPostTranscribe(audioPath string) error {
 	return cmd.Run()
 }
 
-// runPostTranscribeCapture runs the same batch pass with stdout captured.
-// Under --stream, stdout carries NDJSON, and a transcript written straight
-// into it would break the consumer's line parser. Stderr still goes to fd 2:
-// whisper's and ffmpeg's diagnostics are not audiomemo's to reformat.
-func runPostTranscribeCapture(audioPath string) (string, []string, error) {
-	cmd, args, err := newPostTranscribeCmd(audioPath)
+// runPostTranscribeCapture runs the same batch pass with stdout captured, for
+// the callers that decide for themselves what stdout receives: --stream fills
+// it with NDJSON, and --print text emits the transcript on its own terms.
+// Stderr still goes to fd 2: whisper's and ffmpeg's diagnostics are not
+// audiomemo's to reformat.
+func runPostTranscribeCapture(audioPath string, plainText bool) (string, []string, error) {
+	cmd, args, err := newPostTranscribeCmd(audioPath, plainText)
 	if err != nil {
 		return "", nil, err
 	}
@@ -562,20 +635,21 @@ func mentionsDiarize(transcribeArgs string) bool {
 	return false
 }
 
-func buildPostTranscribeArgs(audioPath, transcribeArgs string, verbose, localWhisperOnly, streaming bool, lookPath func(string) (string, error)) ([]string, error) {
+func buildPostTranscribeArgs(audioPath, transcribeArgs string, verbose, localWhisperOnly, plainText bool, lookPath func(string) (string, error)) ([]string, error) {
 	args := []string{}
 	if verbose {
 		args = append(args, "--verbose")
 	}
-	// A stream consumer is feeding the text somewhere it will be used as
-	// prose: an editor, a prompt, a note. Speaker labels are noise there, and
-	// both cloud backends default Diarize to true in config, so the label
-	// arrives without anyone asking for it.
+	// A consumer of the text — an NDJSON stream, or a pipe that asked for the
+	// transcript — is feeding it somewhere it will be used as prose: an
+	// editor, a prompt, a note. Speaker labels are noise there, and both cloud
+	// backends default Diarize to true in config, so the label arrives without
+	// anyone asking for it.
 	//
 	// This goes ahead of the user's own args so `--transcribe-args "--diarize"`
-	// still wins, which is the escape hatch for the rare streamed recording of
-	// an actual conversation.
-	if streaming && !mentionsDiarize(transcribeArgs) {
+	// still wins, which is the escape hatch for the rare recording of an
+	// actual conversation.
+	if plainText && !mentionsDiarize(transcribeArgs) {
 		args = append(args, "--diarize=false")
 	}
 	if transcribeArgs != "" {

@@ -21,10 +21,16 @@ var deviceCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("failed to load config: %w", err)
 		}
-		if err := maybeOnboard(cfg, dConfig); err != nil {
+		ui := resolveTUITarget()
+		defer ui.Close()
+		warnTUITarget(ui)
+		if !ui.Available {
+			return fmt.Errorf("the device manager needs an interactive terminal; use `audiomemo device list`")
+		}
+		if err := maybeOnboard(cfg, dConfig, ui); err != nil {
 			return err
 		}
-		return tui.RunDeviceManager(cfg, dConfig)
+		return tui.RunDeviceManager(cfg, dConfig, ui.Options()...)
 	},
 }
 
