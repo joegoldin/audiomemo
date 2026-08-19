@@ -217,3 +217,32 @@ func TestResolveStreamMode(t *testing.T) {
 		})
 	}
 }
+
+func TestReportLiveUnavailable(t *testing.T) {
+	const note = "live transcription unavailable: no ElevenLabs API key configured"
+	tests := []struct {
+		name         string
+		note         string
+		streaming    bool
+		liveDisabled bool
+		want         bool
+	}{
+		{name: "missing key while streaming is worth an error", note: note, streaming: true, want: true},
+		{
+			name:         "an explicit --no-live-transcription is not an error",
+			note:         "live transcription disabled",
+			streaming:    true,
+			liveDisabled: true,
+		},
+		{name: "no note means nothing to report", streaming: true},
+		{name: "outside --stream there is no consumer to tell", note: note},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := reportLiveUnavailable(tc.note, tc.streaming, tc.liveDisabled); got != tc.want {
+				t.Errorf("reportLiveUnavailable(%q, %v, %v) = %v, want %v",
+					tc.note, tc.streaming, tc.liveDisabled, got, tc.want)
+			}
+		})
+	}
+}

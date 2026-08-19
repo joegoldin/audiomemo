@@ -101,6 +101,17 @@ func ExecuteRecordWhisper() {
 	ExecuteRecord()
 }
 
+// reportLiveUnavailable decides whether a stream consumer should be told, as an
+// error event, that live transcription is not running.
+//
+// Only when it was wanted and could not be had. --no-live-transcription is a
+// choice rather than a failure, and start.mode already reports it as "none";
+// emitting an error there would raise a failure banner over a flag the user
+// deliberately passed.
+func reportLiveUnavailable(streamNote string, streaming, liveDisabled bool) bool {
+	return streamNote != "" && streaming && !liveDisabled
+}
+
 func resolveRecordTranscriptionMode(noLiveFlag, whisperShortcut, transcribeFlag bool) (liveDisabled, batchTranscribe bool) {
 	return noLiveFlag || whisperShortcut, transcribeFlag || whisperShortcut
 }
@@ -316,9 +327,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 			// pipe writes (which would freeze the primary encoded output too).
 			go io.Copy(io.Discard, rec.PCMReader)
 		}
-	} else if streamNote != "" && rStream {
-		// "no ElevenLabs API key configured" is the note the TUI shows; under
-		// --stream the same fact reaches the consumer as an error event.
+	} else if reportLiveUnavailable(streamNote, rStream, liveDisabled) {
 		streamStartErr = errors.New(streamNote)
 	}
 
