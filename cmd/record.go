@@ -12,6 +12,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/audiomemo/internal/config"
 	"github.com/joegoldin/audiomemo/internal/record"
+	"github.com/joegoldin/audiomemo/internal/stream"
 	"github.com/joegoldin/audiomemo/internal/transcribe"
 	"github.com/joegoldin/audiomemo/internal/tui"
 	"github.com/spf13/cobra"
@@ -34,6 +35,7 @@ var (
 	rClips           bool
 	rNoLive          bool
 	rWhisperShortcut bool
+	rStream          bool
 )
 
 var recordCmd = &cobra.Command{
@@ -80,6 +82,7 @@ func init() {
 	recordCmd.Flags().StringVar(&rConfig, "config", "", "config file path")
 	recordCmd.Flags().BoolVarP(&rClips, "clips", "C", false, "clips mode: record multiple clips sequentially")
 	recordCmd.Flags().BoolVar(&rNoLive, "no-live-transcription", false, "disable live transcription while recording")
+	recordCmd.Flags().BoolVar(&rStream, "stream", false, "emit newline-delimited JSON events on stdout while recording (implies --no-tui)")
 }
 
 func ExecuteRecord() {
@@ -100,6 +103,36 @@ func resolveRecordTranscriptionMode(noLiveFlag, whisperShortcut, transcribeFlag 
 	return noLiveFlag || whisperShortcut, transcribeFlag || whisperShortcut
 }
 
+// validateStreamFlags rejects the combinations --stream cannot honour. Both
+// rejected modes want stdout for something other than NDJSON, and a consumer
+// parsing one object per line would choke on either.
+func validateStreamFlags(streamFlag, clips, listDevices bool) error {
+	if !streamFlag {
+		return nil
+	}
+	if clips {
+		return fmt.Errorf("--stream cannot be combined with --clips: clips mode is an interactive TUI loop")
+	}
+	if listDevices {
+		return fmt.Errorf("--stream cannot be combined with --list-devices: use `audiomemo device list`")
+	}
+	return nil
+}
+
+// resolveStreamMode reports what the start event should claim. It answers one
+// question for the consumer: will partial events arrive? A batch pass alone
+// produces a single final at the end and nothing before it.
+func resolveStreamMode(liveActive, batchTranscribe bool) string {
+	switch {
+	case liveActive:
+		return stream.ModeLive
+	case batchTranscribe:
+		return stream.ModeBatch
+	default:
+		return stream.ModeNone
+	}
+}
+
 func runRecord(cmd *cobra.Command, args []string) error {
 	var cfg *config.Config
 	var err error
@@ -110,6 +143,16 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	}
 	if err != nil {
 		return fmt.Errorf("failed to load config: %w", err)
+	}
+
+	if err := validateStreamFlags(rStream, rClips, rListDevices); err != nil {
+		return err
+	}
+	// A bubbletea alternate screen and an NDJSON consumer cannot both own
+	// stdout. Forcing headless mode here also suppresses the interactive
+	// device picker below, which a machine consumer could not answer.
+	if rStream {
+		rNoTUI = true
 	}
 
 	if err := maybeOnboard(cfg, rConfig); err != nil {
@@ -316,7 +359,12 @@ func runRecord(cmd *cobra.Command, args []string) error {
 
 	// Print just the path to stdout so it can be piped, e.g.:
 	//   transcribe $(record)
-	fmt.Println(outputPath)
+	// Under --stream, stdout carries NDJSON and a bare path line would break
+	// a line-oriented consumer; path travels on the start, final, and end
+	// events instead.
+	if !rStream {
+		fmt.Println(outputPath)
+	}
 
 	if shouldTranscribe {
 		// Batch transcribe overwrites the promoted live transcript at

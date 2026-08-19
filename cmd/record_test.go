@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 )
 
@@ -168,5 +169,51 @@ func TestPromoteLiveTranscriptEmpty(t *testing.T) {
 	}
 	if promoted != "" {
 		t.Errorf("expected skip for blank live file, got %q", promoted)
+	}
+}
+
+func TestValidateStreamFlags(t *testing.T) {
+	if err := validateStreamFlags(false, true, true); err != nil {
+		t.Errorf("without --stream nothing is rejected, got %v", err)
+	}
+	if err := validateStreamFlags(true, false, false); err != nil {
+		t.Errorf("plain --stream must be accepted, got %v", err)
+	}
+	// Clips mode drives an interactive TUI loop, so it owns stdout for
+	// something that is not NDJSON.
+	err := validateStreamFlags(true, true, false)
+	if err == nil {
+		t.Fatal("--stream --clips must be rejected")
+	}
+	if !strings.Contains(err.Error(), "--clips") {
+		t.Errorf("error should name the offending flag, got %q", err)
+	}
+	// --list-devices prints a human table on stdout.
+	err = validateStreamFlags(true, false, true)
+	if err == nil {
+		t.Fatal("--stream --list-devices must be rejected")
+	}
+	if !strings.Contains(err.Error(), "device list") {
+		t.Errorf("error should point at the supported alternative, got %q", err)
+	}
+}
+
+func TestResolveStreamMode(t *testing.T) {
+	cases := []struct {
+		name                  string
+		liveActive, willBatch bool
+		want                  string
+	}{
+		{"realtime backend connected", true, false, "live"},
+		{"realtime plus a batch pass still yields partials", true, true, "live"},
+		{"no key but -t was passed", false, true, "batch"},
+		{"no key and no batch pass", false, false, "none"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := resolveStreamMode(c.liveActive, c.willBatch); got != c.want {
+				t.Errorf("resolveStreamMode(%v, %v) = %q, want %q", c.liveActive, c.willBatch, got, c.want)
+			}
+		})
 	}
 }

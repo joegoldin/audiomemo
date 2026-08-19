@@ -52,6 +52,8 @@ When run without `-D`, an interactive device picker is shown first.
     -v, --verbose                verbose output (passed to transcribe)
     -L, --list-devices           list devices and exit
         --no-tui                 headless mode (Ctrl+C to stop)
+        --stream                 emit newline-delimited JSON on stdout
+                                 (implies --no-tui; see STREAMING OUTPUT)
         --config string          config file path
 
 TUI keybindings during recording:
@@ -194,6 +196,40 @@ the insertion point doubles as a VU meter.
   transcripts are only produced by `Q` / `-t` batch runs
 - `recw` never starts live transcription and always runs a local Whisper batch
   transcription after recording
+
+## STREAMING OUTPUT
+
+`record --stream` writes one JSON object per line to stdout while recording,
+so another program can render the transcript and the mic level live.
+
+    $ record --stream -D mic -t
+    {"type":"start","t":0,"device":"alsa_input.usb-Blue_Yeti-00.analog-stereo","device_label":"mic","devices":["alsa_input.usb-Blue_Yeti-00.analog-stereo"],"path":"/home/joe/Recordings/recording-2026-08-18T14-30-05.ogg","format":"ogg","sample_rate":48000,"channels":1,"mode":"live","backend":"elevenlabs"}
+    {"type":"level","t":52,"rms":0.21,"db":-47.4}
+    {"type":"partial","t":1840,"text":"so the thing is"}
+    {"type":"commit","t":2900,"text":"So the thing is,"}
+    {"type":"final","t":9120,"text":"So the thing is, we shipped it.","path":"/home/joe/Recordings/recording-2026-08-18T14-30-05.ogg","transcript_path":"/home/joe/Recordings/recording-2026-08-18T14-30-05.txt","backend":"elevenlabs","source":"batch"}
+    {"type":"end","t":9130,"reason":"signal","path":"/home/joe/Recordings/recording-2026-08-18T14-30-05.ogg","exit_code":0}
+
+Every event carries `type` and `t` (milliseconds since the stream opened).
+
+    start    once, after the pipeline is up. `mode` is `live` (partials will
+             arrive), `batch` (no partials, one final after recording), or
+             `none` (no transcript at all).
+    level    `rms` on 0..1 and `db` in dBFS, coalesced to 20 Hz.
+    partial  in-progress text; replaces the previous partial.
+    commit   finalised text; append it.
+    final    the finished transcript. `source` is `live` or `batch`.
+    error    `scope` is record, stream, transcribe, or config; `fatal` says
+             whether recording continued.
+    end      always last. Reaching EOF without it means the producer died.
+
+`--stream` implies `--no-tui`, suppresses the bare path line, and installs a
+SIGINT/SIGTERM handler that stops ffmpeg gracefully and closes the stream with
+`end{"reason":"signal"}`. A second signal exits immediately. It cannot be
+combined with `--clips` or `--list-devices`.
+
+Unknown event types must be skipped rather than treated as errors, so the
+schema can grow.
 
 ## INSTALL
 
