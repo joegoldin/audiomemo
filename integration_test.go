@@ -798,3 +798,66 @@ func TestRecordHelpShowsPositionalName(t *testing.T) {
 		t.Error("help should show optional [name ...] argument")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// record --stream
+// ---------------------------------------------------------------------------
+
+func TestRecordStreamRejectsClips(t *testing.T) {
+	_, stderr, err := run(t, "record", "--stream", "--clips", "notes")
+	if err == nil {
+		t.Fatal("--stream --clips should fail")
+	}
+	if !strings.Contains(stderr, "--clips") {
+		t.Errorf("stderr should name the offending flag, got %q", stderr)
+	}
+}
+
+func TestRecordStreamRejectsListDevices(t *testing.T) {
+	_, stderr, err := run(t, "record", "--stream", "--list-devices")
+	if err == nil {
+		t.Fatal("--stream --list-devices should fail")
+	}
+	if !strings.Contains(stderr, "device list") {
+		t.Errorf("stderr should point at the alternative, got %q", stderr)
+	}
+}
+
+// Rejections must not put anything on stdout, or a consumer that started
+// parsing before checking the exit status would see a half-stream.
+func TestRecordStreamRejectionsKeepStdoutClean(t *testing.T) {
+	stdout, _, _ := run(t, "record", "--stream", "--clips", "notes")
+	if stdout != "" {
+		t.Errorf("stdout = %q, want empty", stdout)
+	}
+}
+
+func TestRecordHelpDocumentsStream(t *testing.T) {
+	stdout, _, err := run(t, "record", "--help")
+	if err != nil {
+		t.Fatalf("record --help failed: %v", err)
+	}
+	if !strings.Contains(stdout, "--stream") {
+		t.Error("record --help does not mention --stream")
+	}
+	if !strings.Contains(stdout, "newline-delimited JSON") {
+		t.Error("the --stream help text should say what it emits")
+	}
+}
+
+// The regression gate for the flag's whole premise: without --stream, record
+// still prints one bare path and nothing else, so `transcribe $(record)` works.
+func TestRecordWithoutStreamStillListsDevicesAsText(t *testing.T) {
+	stdout, _, err := run(t, "record", "--list-devices")
+	if err != nil {
+		t.Skipf("no audio device layer available: %v", err)
+	}
+	for _, line := range strings.Split(strings.TrimSpace(stdout), "\n") {
+		if line == "" {
+			continue
+		}
+		if strings.HasPrefix(strings.TrimSpace(line), "{") {
+			t.Errorf("plain --list-devices emitted JSON: %q", line)
+		}
+	}
+}
