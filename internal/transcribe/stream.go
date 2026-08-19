@@ -20,6 +20,11 @@ import (
 // WebSocket endpoint. The batch "scribe_v2" model is not valid here.
 const realtimeModelID = "scribe_v2_realtime"
 
+// RealtimeBackendName identifies the Streamer's provider in machine-readable
+// output. The Transcriber interface's Name() covers the batch backends; the
+// realtime path has no Transcriber, so it needs its own constant.
+const RealtimeBackendName = "elevenlabs"
+
 // defaultReconnectBackoff is the initial delay between reconnect attempts
 // after a non-fatal session failure. Doubles up to maxReconnectBackoff.
 const (
