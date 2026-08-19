@@ -27,6 +27,17 @@ type RecordOpts struct {
 	Channels    int
 	OutputPath  string
 	LivePCM     bool
+
+	// MaxDuration caps the capture length. It becomes ffmpeg's own -t, so
+	// ffmpeg finalises the file and exits on its own; every run loop already
+	// watches Recorder.Done and so needs no further handling.
+	MaxDuration time.Duration
+	// MaxSilence stops the recording once the room has been quiet for this
+	// long. Zero leaves silence detection off.
+	MaxSilence time.Duration
+	// SilenceThreshold is the dBFS level at or below which a reading counts as
+	// silence. Zero means DefaultSilenceThreshold.
+	SilenceThreshold float64
 }
 
 type Recorder struct {
@@ -49,6 +60,14 @@ type Recorder struct {
 
 	stderrMu   sync.Mutex
 	stderrTail []string
+
+	// stopFn ends the recording when silence detection trips. Start points it
+	// at Stop; a Recorder built without a live ffmpeg has no stdin to write
+	// "q" to, so tests point it at a spy instead.
+	stopFn func()
+
+	silenceMu      sync.Mutex
+	silenceStopped bool
 }
 
 func InputFormat() string {
@@ -71,6 +90,15 @@ func CodecForFormat(format string) string {
 	}
 }
 
+// ffmpegDurationArgs renders MaxDuration as ffmpeg's -t, in seconds. It
+// returns nil when unset so callers can append it unconditionally.
+func ffmpegDurationArgs(d time.Duration) []string {
+	if d <= 0 {
+		return nil
+	}
+	return []string{"-t", strconv.FormatFloat(d.Seconds(), 'f', -1, 64)}
+}
+
 func BuildFFmpegArgs(opts RecordOpts) []string {
 	inputFmt := InputFormat()
 	device := opts.Device
@@ -88,12 +116,15 @@ func BuildFFmpegArgs(opts RecordOpts) []string {
 
 	args := []string{
 		"-f", inputFmt,
+	}
+	args = append(args, ffmpegDurationArgs(opts.MaxDuration)...)
+	args = append(args,
 		"-i", inputDevice,
 		"-af", "asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
 		"-c:a", codec,
 		"-ar", strconv.Itoa(opts.SampleRate),
 		"-ac", strconv.Itoa(opts.Channels),
-	}
+	)
 
 	if codec == "libopus" {
 		args = append(args, "-b:a", "64k")
@@ -133,7 +164,9 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 		if inputFmt == "avfoundation" && !strings.HasPrefix(dev, ":") {
 			inputDevice = ":" + dev
 		}
-		args = append(args, "-f", inputFmt, "-i", inputDevice)
+		args = append(args, "-f", inputFmt)
+		args = append(args, ffmpegDurationArgs(opts.MaxDuration)...)
+		args = append(args, "-i", inputDevice)
 	}
 
 	// Build filter_complex: mix all inputs then apply VU meter filters.
@@ -264,10 +297,25 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		expectedSources: expectedSources,
 	}
 
+	r.stopFn = r.Stop
+
+	threshold := opts.SilenceThreshold
+	if threshold == 0 {
+		threshold = DefaultSilenceThreshold
+	}
+
 	// Using a Writer (rather than StderrPipe + goroutine) lets cmd.Wait()
 	// synchronize with the stderr drain automatically — guaranteeing the
 	// tail buffer is fully populated by the time we read it on exit.
-	cmd.Stderr = &stderrTap{r: r}
+	//
+	// The tap is also where silence detection lives: it sees every RMS
+	// reading ffmpeg prints, whereas Recorder.Level drops readings when its
+	// consumer falls behind.
+	cmd.Stderr = &stderrTap{
+		r:       r,
+		silence: NewSilenceWatcher(threshold, opts.MaxSilence),
+		now:     time.Now,
+	}
 
 	if err := cmd.Start(); err != nil {
 		if pcmReadEnd != nil {
@@ -309,6 +357,8 @@ func Start(opts RecordOpts) (*Recorder, error) {
 type stderrTap struct {
 	r       *Recorder
 	pending []byte // buffer for partial trailing line across Write calls
+	silence *SilenceWatcher
+	now     func() time.Time
 }
 
 func (s *stderrTap) Write(p []byte) (int, error) {
@@ -328,6 +378,12 @@ func (s *stderrTap) Write(p []byte) (int, error) {
 func (s *stderrTap) handleLine(line string) {
 	if m := rmsPattern.FindStringSubmatch(line); len(m) > 1 {
 		if val, err := strconv.ParseFloat(m[1], 64); err == nil {
+			// Guarded rather than relying on Push's nil-safety: with
+			// silence detection off there is no clock to read, and no reason
+			// to read one a hundred times a second.
+			if s.silence != nil && s.silence.Push(val, s.now()) {
+				s.r.stopForSilence()
+			}
 			select {
 			case s.r.Level <- val:
 			default:
@@ -446,6 +502,26 @@ func (r *Recorder) Stop() {
 }
 
 // Wait blocks until ffmpeg has fully exited and the output file is finalized.
+// stopForSilence ends the recording because --max-silence elapsed. The
+// SilenceWatcher fires once, so this runs once. It stops in the background
+// because the caller is the goroutine draining ffmpeg's stderr, which must
+// not block on the stdin write that Stop performs.
+func (r *Recorder) stopForSilence() {
+	r.silenceMu.Lock()
+	r.silenceStopped = true
+	r.silenceMu.Unlock()
+	go r.stopFn()
+}
+
+// StoppedForSilence reports whether the recording ended because it went quiet
+// for longer than --max-silence, so callers can say so rather than leaving an
+// unexplained early exit.
+func (r *Recorder) StoppedForSilence() bool {
+	r.silenceMu.Lock()
+	defer r.silenceMu.Unlock()
+	return r.silenceStopped
+}
+
 func (r *Recorder) Wait() error {
 	<-r.done
 	return r.exitErr

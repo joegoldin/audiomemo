@@ -3,9 +3,11 @@ package record
 import (
 	"fmt"
 	"math"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestBuildFFmpegArgs(t *testing.T) {
@@ -490,3 +492,152 @@ func (w *writeTo) Write(p []byte) (int, error) { return w.w.Write(p) }
 // Ensure the test helpers compile (use fmt and strings).
 var _ = fmt.Sprintf
 var _ = strings.Contains
+
+func TestBuildFFmpegArgsMaxDuration(t *testing.T) {
+	opts := RecordOpts{
+		Device:      "default",
+		Format:      "ogg",
+		SampleRate:  48000,
+		Channels:    1,
+		OutputPath:  "/tmp/test.ogg",
+		MaxDuration: 90 * time.Second,
+	}
+	args := BuildFFmpegArgs(opts)
+
+	// -t has to be an input option (before -i) so it bounds the capture
+	// itself, which is what makes it apply to the PCM pipe output too.
+	idxT, idxI := indexOf(args, "-t"), indexOf(args, "-i")
+	if idxT < 0 {
+		t.Fatalf("expected -t in args: %v", args)
+	}
+	if idxT > idxI {
+		t.Errorf("-t at %d should precede -i at %d: %v", idxT, idxI, args)
+	}
+	if args[idxT+1] != "90" {
+		t.Errorf("expected -t 90, got -t %s", args[idxT+1])
+	}
+}
+
+func TestBuildFFmpegArgsNoMaxDuration(t *testing.T) {
+	args := BuildFFmpegArgs(RecordOpts{Device: "default", Format: "ogg", OutputPath: "/tmp/t.ogg"})
+	if idx := indexOf(args, "-t"); idx >= 0 {
+		t.Errorf("unset MaxDuration should not add -t: %v", args)
+	}
+}
+
+func TestBuildFFmpegArgsMultiMaxDurationPerInput(t *testing.T) {
+	opts := RecordOpts{
+		Devices:     []string{"mic", "desktop"},
+		Format:      "ogg",
+		SampleRate:  48000,
+		Channels:    1,
+		OutputPath:  "/tmp/test.ogg",
+		MaxDuration: 30 * time.Second,
+	}
+	args, err := BuildFFmpegArgsMulti(opts)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	// Every input needs its own -t: bounding only the first would leave the
+	// amix waiting on the others.
+	var pairs int
+	for i, a := range args {
+		if a == "-i" && i >= 2 && args[i-2] == "-t" {
+			pairs++
+		}
+	}
+	if pairs != 2 {
+		t.Errorf("expected -t before each of 2 inputs, got %d: %v", pairs, args)
+	}
+}
+
+func TestFFmpegDurationArgs(t *testing.T) {
+	tests := []struct {
+		name string
+		d    time.Duration
+		want []string
+	}{
+		{name: "zero is omitted", d: 0, want: nil},
+		{name: "negative is omitted", d: -time.Second, want: nil},
+		{name: "whole seconds", d: 30 * time.Second, want: []string{"-t", "30"}},
+		{name: "minutes become seconds", d: 90 * time.Second, want: []string{"-t", "90"}},
+		{name: "sub-second precision survives", d: 1500 * time.Millisecond, want: []string{"-t", "1.5"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ffmpegDurationArgs(tt.d)
+			if !reflect.DeepEqual(got, tt.want) {
+				t.Errorf("ffmpegDurationArgs(%v) = %v, want %v", tt.d, got, tt.want)
+			}
+		})
+	}
+}
+
+func TestStderrTapStopsOnSilence(t *testing.T) {
+	stopped := make(chan struct{})
+	r := &Recorder{
+		Level:  make(chan float64, 32),
+		stopFn: func() { close(stopped) },
+	}
+	tap := &stderrTap{
+		r:       r,
+		silence: NewSilenceWatcher(-40, time.Second),
+		now:     fakeClock(time.Duration(0), 500*time.Millisecond, 1500*time.Millisecond),
+	}
+
+	rms := func(db string) string {
+		return "[Parsed_astats_1 @ 0x1] lavfi.astats.Overall.RMS_level=" + db + "\n"
+	}
+	tap.Write([]byte(rms("-20"))) // speech at t=0
+	tap.Write([]byte(rms("-70"))) // quiet at t=0.5s, under the limit
+	select {
+	case <-stopped:
+		t.Fatal("stopped 0.5s into a 1s silence limit")
+	default:
+	}
+
+	tap.Write([]byte(rms("-70"))) // quiet at t=1.5s, over the limit
+	select {
+	case <-stopped:
+	case <-time.After(2 * time.Second):
+		t.Fatal("silence limit exceeded but recording was not stopped")
+	}
+	if !r.StoppedForSilence() {
+		t.Error("StoppedForSilence() = false after a silence stop")
+	}
+}
+
+func TestStderrTapWithoutSilenceWatcher(t *testing.T) {
+	r := &Recorder{Level: make(chan float64, 4)}
+	tap := &stderrTap{r: r}
+
+	// stopFn is nil here: with no watcher configured nothing may call it.
+	tap.Write([]byte("[Parsed_astats_1 @ 0x1] lavfi.astats.Overall.RMS_level=-90\n"))
+	if r.StoppedForSilence() {
+		t.Error("StoppedForSilence() = true with no --max-silence set")
+	}
+}
+
+// fakeClock returns a now() that walks the given offsets from a fixed base,
+// repeating the last one once exhausted.
+func fakeClock(offsets ...time.Duration) func() time.Time {
+	base := time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC)
+	i := 0
+	return func() time.Time {
+		at := base.Add(offsets[i])
+		if i < len(offsets)-1 {
+			i++
+		}
+		return at
+	}
+}
+
+func indexOf(args []string, want string) int {
+	for i, a := range args {
+		if a == want {
+			return i
+		}
+	}
+	return -1
+}
