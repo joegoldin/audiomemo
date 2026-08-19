@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/joegoldin/audiomemo/internal/stream"
 )
 
 var vuDBText = lipgloss.NewStyle().Foreground(lipgloss.Color("#666666"))
@@ -21,15 +22,11 @@ var (
 	waveRed    = lipgloss.NewStyle().Foreground(lipgloss.Color("#ef4444"))
 )
 
+// dbToLevel maps a dBFS reading onto the 0..1 the meter draws. The mapping
+// lives in internal/stream so the TUI and the --stream wire format cannot
+// disagree about what "half" means.
 func dbToLevel(db float64) float64 {
-	const minDB = -60.0
-	if db <= minDB {
-		return 0
-	}
-	if db >= 0 {
-		return 1.0
-	}
-	return (db - minDB) / (0 - minDB)
+	return stream.NormalizeLevel(db)
 }
 
 func levelToDB(level float64) float64 {

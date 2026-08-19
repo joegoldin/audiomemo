@@ -8,10 +8,6 @@ import (
 	"time"
 )
 
-// FloorDB is the quietest reading the meter distinguishes. Task 2 moves this
-// to level.go alongside the normalisation it belongs with.
-const FloorDB = -60.0
-
 // Emitter serialises events onto one writer. Levels arrive on ffmpeg's stderr
 // goroutine and text arrives on the websocket goroutine, so the mutex is what
 // keeps lines whole.
