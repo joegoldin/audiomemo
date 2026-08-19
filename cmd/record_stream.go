@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -177,6 +178,60 @@ func runRecordStream(
 	return nil
 }
 
-// emitFinal is filled in by task 5, where the batch pass gets captured.
+// backendFromArgs reports which backend the batch subprocess will use. It
+// scans for the last --backend/-b because cobra keeps the final occurrence,
+// which is exactly why recw appends its local-only backend after the user's
+// --transcribe-args. With no explicit backend the subprocess autodetects from
+// the same config this process loaded, so resolving it here agrees.
+func backendFromArgs(cfg *config.Config, args []string) string {
+	name := ""
+	for i := 0; i < len(args)-1; i++ {
+		if args[i] == "--backend" || args[i] == "-b" {
+			name = args[i+1]
+		}
+	}
+	backend, err := transcribe.NewDispatcher(cfg, name)
+	if err != nil {
+		return name
+	}
+	return backend.Name()
+}
+
+// emitFinal writes at most one final event. The batch pass wins when it ran
+// and produced text, because it is the diarised, higher-quality result; the
+// live transcript is the fallback when batch was not asked for or failed,
+// mirroring how the TUI path promotes <base>-live.txt before overwriting it.
 func emitFinal(em *stream.Emitter, cfg *config.Config, audioPath string, streamer *transcribe.Streamer, batchTranscribe bool) {
+	liveText := ""
+	if streamer != nil {
+		liveText = strings.TrimSpace(streamer.FullText())
+	}
+	transcriptPath := transcriptPathFor(audioPath, transcribe.FormatText)
+
+	if batchTranscribe {
+		text, args, err := runPostTranscribeCapture(audioPath)
+		if err != nil {
+			em.Error(stream.ScopeTranscribe, false, err)
+		} else if strings.TrimSpace(text) != "" {
+			em.Final(stream.FinalEvent{
+				Text:           text,
+				Path:           audioPath,
+				TranscriptPath: transcriptPath,
+				Backend:        backendFromArgs(cfg, args),
+				Source:         stream.SourceBatch,
+			})
+			return
+		}
+	}
+
+	if liveText == "" {
+		return
+	}
+	em.Final(stream.FinalEvent{
+		Text:           liveText,
+		Path:           audioPath,
+		TranscriptPath: transcriptPath,
+		Backend:        transcribe.RealtimeBackendName,
+		Source:         stream.SourceLive,
+	})
 }

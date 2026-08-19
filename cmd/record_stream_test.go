@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/joegoldin/audiomemo/internal/config"
 	"github.com/joegoldin/audiomemo/internal/stream"
 )
 
@@ -151,5 +152,52 @@ func TestEndExitCode(t *testing.T) {
 	}
 	if got := endExitCode(false, nil); got != 0 {
 		t.Errorf("got %d, want 0", got)
+	}
+}
+
+func TestBackendFromArgsTakesTheLastOccurrence(t *testing.T) {
+	cfg := config.Default()
+	// recw appends its local-only backend after the user's --transcribe-args
+	// precisely so it wins; cobra keeps the final occurrence.
+	args := []string{"--language", "en", "--backend", "elevenlabs", "--backend", "whisper-cpp", "memo.ogg"}
+	if got := backendFromArgs(cfg, args); got != "whisper-cpp" {
+		t.Errorf("backendFromArgs = %q, want whisper-cpp", got)
+	}
+}
+
+func TestBackendFromArgsHonoursTheShortFlag(t *testing.T) {
+	cfg := config.Default()
+	if got := backendFromArgs(cfg, []string{"-b", "deepgram", "memo.ogg"}); got != "deepgram" {
+		t.Errorf("backendFromArgs = %q, want deepgram", got)
+	}
+}
+
+// With no explicit backend the subprocess autodetects from the same config
+// this process loaded, so resolving it here gives the same answer.
+func TestBackendFromArgsFallsBackToAutodetect(t *testing.T) {
+	cfg := config.Default()
+	cfg.Transcribe.Deepgram.APIKey = "dg-key"
+	if got := backendFromArgs(cfg, []string{"memo.ogg"}); got != "deepgram" {
+		t.Errorf("backendFromArgs = %q, want deepgram from autodetect", got)
+	}
+}
+
+func TestBackendFromArgsIsEmptyWhenNoBackendExists(t *testing.T) {
+	cfg := config.Default()
+	cfg.Transcribe.Whisper.Binary = "definitely-not-a-real-binary"
+	got := backendFromArgs(cfg, []string{"memo.ogg"})
+	// Autodetect may still find a local whisper on the developer's machine;
+	// the contract is only that it never panics and never invents a name.
+	if got != "" && !strings.Contains(got, "whisper") {
+		t.Errorf("backendFromArgs = %q, want empty or a whisper variant", got)
+	}
+}
+
+func TestEmitFinalSkippedWhenThereIsNoText(t *testing.T) {
+	buf := &bytes.Buffer{}
+	em := stream.NewEmitter(buf)
+	emitFinal(em, config.Default(), "/tmp/memo.ogg", nil, false)
+	if buf.Len() != 0 {
+		t.Errorf("a run with no transcript emitted %q", buf.String())
 	}
 }

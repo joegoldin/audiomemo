@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -500,27 +501,45 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 	}
 }
 
-func runPostTranscribe(audioPath string) error {
+// newPostTranscribeCmd builds the batch transcription subprocess and returns
+// the argument list alongside it, so callers can inspect which backend the
+// subprocess will resolve without re-deriving it.
+func newPostTranscribeCmd(audioPath string) (*exec.Cmd, []string, error) {
 	self, err := os.Executable()
 	if err != nil {
 		self = "transcribe"
 	}
+	args, err := buildPostTranscribeArgs(audioPath, rTranscribeArgs, rVerbose, rWhisperShortcut, exec.LookPath)
+	if err != nil {
+		return nil, nil, err
+	}
+	return exec.Command(self, append([]string{"transcribe"}, args...)...), args, nil
+}
 
-	args, err := buildPostTranscribeArgs(
-		audioPath,
-		rTranscribeArgs,
-		rVerbose,
-		rWhisperShortcut,
-		exec.LookPath,
-	)
+func runPostTranscribe(audioPath string) error {
+	cmd, _, err := newPostTranscribeCmd(audioPath)
 	if err != nil {
 		return err
 	}
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	return cmd.Run()
+}
 
-	transcribeCmd := exec.Command(self, append([]string{"transcribe"}, args...)...)
-	transcribeCmd.Stdout = os.Stdout
-	transcribeCmd.Stderr = os.Stderr
-	return transcribeCmd.Run()
+// runPostTranscribeCapture runs the same batch pass with stdout captured.
+// Under --stream, stdout carries NDJSON, and a transcript written straight
+// into it would break the consumer's line parser. Stderr still goes to fd 2:
+// whisper's and ffmpeg's diagnostics are not audiomemo's to reformat.
+func runPostTranscribeCapture(audioPath string) (string, []string, error) {
+	cmd, args, err := newPostTranscribeCmd(audioPath)
+	if err != nil {
+		return "", nil, err
+	}
+	var out bytes.Buffer
+	cmd.Stdout = &out
+	cmd.Stderr = os.Stderr
+	err = cmd.Run()
+	return strings.TrimRight(out.String(), "\n"), args, err
 }
 
 func buildPostTranscribeArgs(audioPath, transcribeArgs string, verbose, localWhisperOnly bool, lookPath func(string) (string, error)) ([]string, error) {
