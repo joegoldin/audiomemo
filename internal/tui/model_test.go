@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -96,5 +97,58 @@ func TestClipsModelReadyKeysHint(t *testing.T) {
 	}
 	if !strings.Contains(view, "Saved clip 1!") {
 		t.Errorf("expected saved message, got:\n%s", view)
+	}
+}
+
+// A recording can now end on its own — --max-duration lets ffmpeg exit
+// cleanly while the TUI is still up — so the done message has to survive the
+// trip through bubbletea. A message that is nil when the exit was clean is
+// dropped by the event loop, leaving the TUI running over a finished
+// recording.
+func TestListenDoneDeliversCleanExit(t *testing.T) {
+	rec := &record.Recorder{Done: make(chan error, 1)}
+	rec.Done <- nil
+
+	msg := listenDone(rec)()
+	if msg == nil {
+		t.Fatal("clean recorder exit produced a nil message, which bubbletea drops")
+	}
+	done, ok := msg.(doneMsg)
+	if !ok {
+		t.Fatalf("listenDone returned %T, want doneMsg", msg)
+	}
+	if done.err != nil {
+		t.Errorf("doneMsg.err = %v, want nil", done.err)
+	}
+}
+
+func TestListenDoneCarriesFailure(t *testing.T) {
+	rec := &record.Recorder{Done: make(chan error, 1)}
+	rec.Done <- errors.New("ffmpeg blew up")
+
+	msg := listenDone(rec)()
+	done, ok := msg.(doneMsg)
+	if !ok {
+		t.Fatalf("listenDone returned %T, want doneMsg", msg)
+	}
+	if done.err == nil || done.err.Error() != "ffmpeg blew up" {
+		t.Errorf("doneMsg.err = %v, want the recorder's error", done.err)
+	}
+}
+
+func TestModelQuitsWhenRecordingEndsOnItsOwn(t *testing.T) {
+	m := advance(NewModel(nil, testOpts()))
+
+	next, cmd := m.Update(doneMsg{})
+	m = next.(*Model)
+
+	if m.state != StateSaved {
+		t.Errorf("state = %v, want StateSaved", m.state)
+	}
+	if cmd == nil {
+		t.Fatal("a finished recording should quit the TUI")
+	}
+	if _, ok := cmd().(tea.QuitMsg); !ok {
+		t.Errorf("command returned %T, want tea.QuitMsg", cmd())
 	}
 }

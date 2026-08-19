@@ -71,7 +71,12 @@ func (m *Model) StreamErr() error {
 
 type tickMsg time.Time
 type levelMsg float64
-type doneMsg error
+
+// doneMsg reports that the recorder exited. It wraps the error in a struct
+// rather than being one: a clean exit carries a nil error, and a nil interface
+// is a nil tea.Msg, which bubbletea's event loop discards — the TUI would sit
+// there recording nothing after ffmpeg stopped on its own.
+type doneMsg struct{ err error }
 type committedMsg string
 type partialMsg string
 type streamErrMsg error
@@ -154,7 +159,7 @@ func listenLevel(rec *record.Recorder) tea.Cmd {
 func listenDone(rec *record.Recorder) tea.Cmd {
 	return func() tea.Msg {
 		err := <-rec.Done
-		return doneMsg(err)
+		return doneMsg{err: err}
 	}
 }
 
@@ -224,8 +229,8 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case doneMsg:
 		m.state = StateSaved
-		if msg != nil {
-			m.err = error(msg)
+		if msg.err != nil {
+			m.err = msg.err
 		}
 		return m, tea.Quit
 
