@@ -200,6 +200,49 @@ When resolving a device name (`-D` flag or `record.device` config):
 
 Multi-device recording mixes all inputs via ffmpeg amix.
 
+### macOS system audio
+
+On macOS 14.2 or later, **System audio** appears under MONITORS in the
+picker. It uses a native Core Audio process tap: no BlackHole, Loopback,
+SoundSource, or other audio driver is required. Playback continues normally.
+The tap captures the system-wide output mix, not an individual speaker device.
+
+Select your microphone and System audio with Space, then press Enter to record
+both. The saved recording and live transcription receive the combined mix.
+Use headphones to avoid also picking up speaker playback through the microphone.
+
+To record system audio alone:
+
+```sh
+rect -D system-audio
+```
+
+For a reusable microphone-plus-system group, add aliases using the microphone
+name shown by `audiomemo device list`:
+
+```toml
+[devices]
+mic = "MacBook Pro Microphone"
+desktop = "system-audio"
+
+[device_groups]
+meeting = ["mic", "desktop"]
+```
+
+Then run `rect -D meeting`. This config is an example; merge it into your
+existing tables rather than adding duplicate TOML tables.
+
+macOS may ask for system-audio-recording permission. If access is denied or the
+capture stays silent while audio is playing, check **System Settings > Privacy
+& Security > Screen & System Audio Recording** for Audiomemo or the terminal
+hosting it, then restart the command. Microphone access is a separate permission.
+
+Native capture is included in the macOS Nix build. Building from source requires
+cgo enabled and a macOS SDK with the Core Audio tap APIs (14.2 or newer).
+Builds without cgo and older macOS versions retain microphone recording but do
+not offer System audio. Pause/mute is currently PulseAudio-only; do not rely on
+it to silence a macOS recording.
+
 ## LIVE TRANSCRIPTION
 
 `record` starts a private loopback NeMo server for **Nemotron English 0.6B**

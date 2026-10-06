@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.audiomemo.cli</string>
+    <key>CFBundleName</key>
+    <string>Audiomemo</string>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Audiomemo records system audio when you select the System audio source.</string>
+    <key>NSMicrophoneUsageDescription</key>
+    <string>Audiomemo records microphone audio when you select a microphone source.</string>
+</dict>
+</plist>

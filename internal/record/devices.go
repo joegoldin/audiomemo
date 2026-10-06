@@ -1,6 +1,7 @@
 package record
 
 import (
+	"fmt"
 	"os/exec"
 	"regexp"
 	"strings"
@@ -186,8 +187,59 @@ func FuzzyMatchDevice(name string, devices []Device) (Device, bool) {
 	return best, true
 }
 
+var avfoundationDevicePattern = regexp.MustCompile(`^\[AVFoundation indev @ [^\]]+\]\s+\[\d+\]\s+(.+)$`)
+
+func parseAVFoundationDevices(output string) ([]Device, bool) {
+	var devices []Device
+	inAudio, foundAudio := false, false
+	for _, line := range strings.Split(output, "\n") {
+		if strings.Contains(line, "AVFoundation audio devices:") {
+			inAudio, foundAudio = true, true
+			continue
+		}
+		if strings.Contains(line, "AVFoundation video devices:") {
+			inAudio = false
+			continue
+		}
+		if !inAudio {
+			continue
+		}
+		if m := avfoundationDevicePattern.FindStringSubmatch(line); m != nil {
+			// Names remain valid when AVFoundation reorders its device indices.
+			name := strings.TrimSpace(m[1])
+			devices = append(devices, Device{Name: name, Description: name})
+		}
+	}
+	return devices, foundAudio
+}
+
 func ListDevices() ([]Device, error) {
+	devices, err := listInputDevices()
+	if err != nil {
+		return nil, err
+	}
+	if systemAudioAvailable() {
+		devices = append(devices, Device{Name: SystemAudioDevice, Description: "System audio", IsMonitor: true})
+	}
+	return devices, nil
+}
+
+func listInputDevices() ([]Device, error) {
 	inputFmt := InputFormat()
+	if inputFmt == "avfoundation" {
+		cmd := exec.Command("ffmpeg", "-hide_banner", "-f", inputFmt, "-list_devices", "true", "-i", "")
+		out, err := cmd.CombinedOutput()
+		devices, listed := parseAVFoundationDevices(string(out))
+		// AVFoundation lists devices on stderr, then fails to open the empty
+		// input. Only accept that exit status when enumeration actually ran.
+		if listed {
+			return devices, nil
+		}
+		if err != nil {
+			return nil, fmt.Errorf("list AVFoundation devices: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil, fmt.Errorf("ffmpeg did not list AVFoundation audio devices: %s", strings.TrimSpace(string(out)))
+	}
 	cmd := exec.Command("ffmpeg", "-sources", inputFmt)
 	out, err := cmd.CombinedOutput()
 	if err != nil {

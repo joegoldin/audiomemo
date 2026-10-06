@@ -1,14 +1,11 @@
 package tui
 
 import (
-	"bufio"
 	"fmt"
 	"math"
 	"os"
 	"os/exec"
-	"regexp"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 
@@ -113,7 +110,13 @@ func (si *simpleInput) View() string {
 // Messages
 // ---------------------------------------------------------------------------
 
-type dmVUMsg float64                   // live VU level for selected device
+type dmVUMsg float64 // live VU level for selected device
+
+type dmVUErrorMsg struct {
+	err    error
+	cancel <-chan struct{}
+}
+
 type dmTestDoneMsg struct{ err error } // test recording/playback finished
 type dmTickMsg time.Time               // periodic UI refresh
 type devicesLoadedMsg []record.Device  // result of device enumeration
@@ -124,28 +127,28 @@ type devicesLoadedMsg []record.Device  // result of device enumeration
 
 // DeviceManager is the bubbletea model for the device management TUI.
 type DeviceManager struct {
-	state       DeviceManagerState
-	devices     []record.Device
-	config      *config.Config
-	configPath  string
-	cursor           int         // cursor position in device list
-	aliasInput       simpleInput // for alias name input
-	aliasEditInput   simpleInput // for editing alias target device
-	aliasBrowseCursor int       // cursor position when browsing aliases
-	groupInput  simpleInput // for group name input
-	groupSelect      []bool  // multi-select for group aliases (indexed by sorted alias keys)
-	groupCursor      int    // cursor position in the group multi-select
-	groupBrowseCursor int   // cursor position when browsing groups
-	message     string      // status / error message
-	vuLevel     float64     // live VU preview level (dB)
-	vuSmoothed  float64     // smoothed VU level (0..1)
-	vuProc      *exec.Cmd   // ffmpeg VU preview process
-	vuLevelCh   chan float64// channel streaming VU levels from ffmpeg goroutine
-	vuCancel    chan struct{}// signal to stop VU goroutine
-	testProc    *exec.Cmd   // test record/play process
-	testFile    string      // path to temp test recording
-	width       int
-	height      int
+	state             DeviceManagerState
+	devices           []record.Device
+	config            *config.Config
+	configPath        string
+	cursor            int           // cursor position in device list
+	aliasInput        simpleInput   // for alias name input
+	aliasEditInput    simpleInput   // for editing alias target device
+	aliasBrowseCursor int           // cursor position when browsing aliases
+	groupInput        simpleInput   // for group name input
+	groupSelect       []bool        // multi-select for group aliases (indexed by sorted alias keys)
+	groupCursor       int           // cursor position in the group multi-select
+	groupBrowseCursor int           // cursor position when browsing groups
+	message           string        // status / error message
+	vuLevel           float64       // live VU preview level (dB)
+	vuSmoothed        float64       // smoothed VU level (0..1)
+	vuMsgCh           chan tea.Msg  // preview levels and capture failures
+	vuCancel          chan struct{} // signal to stop VU goroutine
+	testCancel        chan struct{} // cancel a test recording
+	testProc          *exec.Cmd     // test playback process
+	testFile          string        // path to temp test recording
+	width             int
+	height            int
 }
 
 // NewDeviceManager creates a DeviceManager model. The caller must provide the
@@ -160,9 +163,9 @@ func NewDeviceManager(cfg *config.Config, configPath string) *DeviceManager {
 	}
 
 	return &DeviceManager{
-		state:      DMBrowse,
-		config:     cfg,
-		configPath: configPath,
+		state:          DMBrowse,
+		config:         cfg,
+		configPath:     configPath,
 		aliasInput:     newSimpleInput("alias name"),
 		aliasEditInput: newSimpleInput("device name"),
 		groupInput:     newSimpleInput("group name"),
@@ -233,6 +236,12 @@ func (dm *DeviceManager) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case dmTickMsg:
 		return dm, dmTickCmd()
 
+	case dmVUErrorMsg:
+		if msg.cancel == dm.vuCancel {
+			dm.message = fmt.Sprintf("Audio preview: %v", msg.err)
+		}
+		return dm, nil
+
 	case dmVUMsg:
 		dm.vuLevel = float64(msg)
 		// Smooth: fast attack, slow decay
@@ -247,8 +256,11 @@ func (dm *DeviceManager) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return dm, dm.listenVU()
 
 	case dmTestDoneMsg:
+		dm.testCancel = nil
 		if msg.err != nil {
 			dm.message = fmt.Sprintf("Error: %v", msg.err)
+			dm.state = DMBrowse
+			return dm, dm.startVU()
 		}
 		switch dm.state {
 		case DMTestRecording:
@@ -310,6 +322,10 @@ func (dm *DeviceManager) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case DMTestRecording, DMTestPlayback:
 		// Allow ctrl+c to abort test
 		if msg.String() == "ctrl+c" {
+			if dm.testCancel != nil {
+				close(dm.testCancel)
+				dm.testCancel = nil
+			}
 			if dm.testProc != nil && dm.testProc.Process != nil {
 				dm.testProc.Process.Kill()
 			}
@@ -565,7 +581,6 @@ func (dm *DeviceManager) handleGroupSelectKey(msg tea.KeyMsg) (tea.Model, tea.Cm
 	return dm, nil
 }
 
-
 func (dm *DeviceManager) handleAliasBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	aliases := dm.sortedAliases()
 	switch msg.String() {
@@ -762,11 +777,8 @@ func (dm *DeviceManager) handleConfirmDeleteGroupKey(msg tea.KeyMsg) (tea.Model,
 // VU preview
 // ---------------------------------------------------------------------------
 
-var vuRMSPattern = regexp.MustCompile(`lavfi\.astats\.Overall\.RMS_level=(-?[\d.]+|inf|-inf)`)
-
-// startVU launches an ffmpeg subprocess that streams RMS levels for the
-// currently selected device. Levels are sent on dm.vuLevelCh which is
-// drained by listenVU commands. Returns the initial listenVU command.
+// startVU uses the recording backend so native taps and hardware inputs have
+// the same capture and cleanup behavior as an actual recording.
 func (dm *DeviceManager) startVU() tea.Cmd {
 	dm.stopVU()
 	if len(dm.devices) == 0 {
@@ -775,56 +787,51 @@ func (dm *DeviceManager) startVU() tea.Cmd {
 	dev := dm.devices[dm.cursor]
 	cancel := make(chan struct{})
 	dm.vuCancel = cancel
-	levelCh := make(chan float64, 10)
-	dm.vuLevelCh = levelCh
-
-	// Launch ffmpeg in a background goroutine; it writes to levelCh.
+	messages := make(chan tea.Msg, 10)
+	dm.vuMsgCh = messages
 	go func() {
-		defer close(levelCh)
-		inputFmt := record.InputFormat()
-		cmd := exec.Command("ffmpeg",
-			"-f", inputFmt,
-			"-i", dev.Name,
-			"-af", "asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
-			"-f", "null", "-",
-		)
-		stderr, err := cmd.StderrPipe()
+		defer close(messages)
+		reportError := func(err error) {
+			select {
+			case messages <- dmVUErrorMsg{err: err, cancel: cancel}:
+			case <-cancel:
+			}
+		}
+		rec, err := record.Start(record.RecordOpts{
+			Device: dev.Name, Format: "wav", SampleRate: 48000,
+			Channels: 1, OutputPath: os.DevNull,
+		})
 		if err != nil {
+			reportError(err)
 			return
 		}
-		if err := cmd.Start(); err != nil {
-			return
-		}
-		dm.vuProc = cmd
-
-		scanner := bufio.NewScanner(stderr)
-		for scanner.Scan() {
+		defer func() {
+			rec.Stop()
+			if err := rec.Wait(); err != nil {
+				reportError(err)
+			}
+		}()
+		for {
 			select {
 			case <-cancel:
-				cmd.Process.Kill()
-				cmd.Wait()
 				return
-			default:
-			}
-			line := scanner.Text()
-			if m := vuRMSPattern.FindStringSubmatch(line); len(m) > 1 {
-				if val, err := strconv.ParseFloat(m[1], 64); err == nil {
-					select {
-					case levelCh <- val:
-					default: // drop if consumer is slow
-					}
+			case val, ok := <-rec.Level:
+				if !ok {
+					return
+				}
+				select {
+				case messages <- dmVUMsg(val):
+				default:
 				}
 			}
 		}
-		cmd.Wait()
 	}()
-
 	return dm.listenVU()
 }
 
 // listenVU returns a tea.Cmd that waits for the next VU level value.
 func (dm *DeviceManager) listenVU() tea.Cmd {
-	ch := dm.vuLevelCh
+	ch := dm.vuMsgCh
 	if ch == nil {
 		return nil
 	}
@@ -833,7 +840,7 @@ func (dm *DeviceManager) listenVU() tea.Cmd {
 		if !ok {
 			return nil
 		}
-		return dmVUMsg(val)
+		return val
 	}
 }
 
@@ -842,12 +849,7 @@ func (dm *DeviceManager) stopVU() {
 		close(dm.vuCancel)
 		dm.vuCancel = nil
 	}
-	if dm.vuProc != nil && dm.vuProc.Process != nil {
-		dm.vuProc.Process.Kill()
-		dm.vuProc.Wait()
-		dm.vuProc = nil
-	}
-	dm.vuLevelCh = nil
+	dm.vuMsgCh = nil
 	dm.vuLevel = -100
 	dm.vuSmoothed = 0
 }
@@ -861,6 +863,8 @@ func (dm *DeviceManager) recordTestClip() tea.Cmd {
 		return nil
 	}
 	dev := dm.devices[dm.cursor]
+	cancel := make(chan struct{})
+	dm.testCancel = cancel
 	return func() tea.Msg {
 		tmpFile, err := os.CreateTemp("", "audiomemo-test-*.wav")
 		if err != nil {
@@ -869,18 +873,19 @@ func (dm *DeviceManager) recordTestClip() tea.Cmd {
 		tmpFile.Close()
 		dm.testFile = tmpFile.Name()
 
-		inputFmt := record.InputFormat()
-		cmd := exec.Command("ffmpeg",
-			"-f", inputFmt,
-			"-i", dev.Name,
-			"-t", "3",
-			"-c:a", "pcm_s16le",
-			"-ar", "48000",
-			"-ac", "1",
-			"-y", dm.testFile,
-		)
-		dm.testProc = cmd
-		if err := cmd.Run(); err != nil {
+		rec, err := record.Start(record.RecordOpts{
+			Device: dev.Name, Format: "wav", SampleRate: 48000,
+			Channels: 1, OutputPath: dm.testFile, MaxDuration: 3 * time.Second,
+		})
+		if err != nil {
+			return dmTestDoneMsg{err: fmt.Errorf("test recording: %w", err)}
+		}
+		select {
+		case <-cancel:
+			rec.Stop()
+		case <-rec.Done:
+		}
+		if err := rec.Wait(); err != nil {
 			return dmTestDoneMsg{err: fmt.Errorf("test recording: %w", err)}
 		}
 		return dmTestDoneMsg{}

@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -27,6 +29,9 @@ type RecordOpts struct {
 	Channels    int
 	OutputPath  string
 	LivePCM     bool
+
+	tapSampleRate int
+	tapChannels   int
 
 	// MaxDuration caps the capture length. It becomes ffmpeg's own -t, so
 	// ffmpeg finalises the file and exits on its own; every run loop already
@@ -48,6 +53,9 @@ type Recorder struct {
 	done      chan struct{} // closed when ffmpeg exits; safe for multiple waiters
 	exitErr   error
 	PCMReader io.ReadCloser
+	nativeTap *systemAudioCapture
+	stopOnce  sync.Once
+	stopping  atomic.Bool
 
 	// muteMu guards muted and sourceOutputIDs: the discovery goroutine writes
 	// the IDs while the TUI goroutine reads them from ToggleMute/Stop.
@@ -100,26 +108,9 @@ func ffmpegDurationArgs(d time.Duration) []string {
 }
 
 func BuildFFmpegArgs(opts RecordOpts) []string {
-	inputFmt := InputFormat()
-	device := opts.Device
-	if device == "" {
-		device = "default"
-	}
-
-	// On macOS avfoundation, input device is ":index" for audio-only
-	inputDevice := device
-	if inputFmt == "avfoundation" && !strings.HasPrefix(device, ":") {
-		inputDevice = ":" + device
-	}
-
 	codec := CodecForFormat(opts.Format)
-
-	args := []string{
-		"-f", inputFmt,
-	}
-	args = append(args, ffmpegDurationArgs(opts.MaxDuration)...)
+	args := ffmpegInputArgs(opts.Device, opts)
 	args = append(args,
-		"-i", inputDevice,
 		"-af", "asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
 		"-c:a", codec,
 		"-ar", strconv.Itoa(opts.SampleRate),
@@ -134,6 +125,9 @@ func BuildFFmpegArgs(opts RecordOpts) []string {
 	// timestamps based on stream start time, causing large PTS offsets
 	// that break downstream tools expecting timestamps starting at 0.
 	args = append(args, "-output_ts_offset", "0")
+	if opts.OutputPath == os.DevNull {
+		args = append(args, "-f", "null")
+	}
 
 	args = append(args, "-y", opts.OutputPath)
 	return args
@@ -153,32 +147,32 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 		return BuildFFmpegArgs(opts), nil
 	}
 
-	inputFmt := InputFormat()
 	codec := CodecForFormat(opts.Format)
 
 	var args []string
 
 	// Add each input device.
 	for _, dev := range devices {
-		inputDevice := dev
-		if inputFmt == "avfoundation" && !strings.HasPrefix(dev, ":") {
-			inputDevice = ":" + dev
-		}
-		args = append(args, "-f", inputFmt)
-		args = append(args, ffmpegDurationArgs(opts.MaxDuration)...)
-		args = append(args, "-i", inputDevice)
+		args = append(args, ffmpegInputArgs(dev, opts)...)
 	}
 
 	// Build filter_complex: mix all inputs then apply VU meter filters.
 	n := len(devices)
-	var inputLabels string
+	var inputLabels, alignment string
 	for i := 0; i < n; i++ {
-		inputLabels += fmt.Sprintf("[%d:a]", i)
+		if usesSystemAudio(opts) {
+			// Native PCM starts at zero while AVFoundation supplies host-clock
+			// timestamps. Align origins and compensate independent input clocks.
+			alignment += fmt.Sprintf("[%d:a]asetpts=PTS-STARTPTS,aresample=async=1:first_pts=0[in%d];", i, i)
+			inputLabels += fmt.Sprintf("[in%d]", i)
+		} else {
+			inputLabels += fmt.Sprintf("[%d:a]", i)
+		}
 	}
 	// When LivePCM is on, fork the mixed audio with asplit so the PCM pipe
 	// output gets the mix too — not just input 0 (the first mic) which is
 	// what ffmpeg auto-selects for an output without -map.
-	filterGraph := fmt.Sprintf(
+	filterGraph := alignment + fmt.Sprintf(
 		"%samix=inputs=%d:duration=longest,asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
 		inputLabels, n,
 	)
@@ -201,6 +195,9 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 	}
 
 	args = append(args, "-output_ts_offset", "0")
+	if opts.OutputPath == os.DevNull {
+		args = append(args, "-f", "null")
+	}
 	args = append(args, "-y", opts.OutputPath)
 	return args, nil
 }
@@ -235,6 +232,32 @@ func appendPCMPipeArgs(args []string, pipeFd int, mapLabel string) []string {
 }
 
 func Start(opts RecordOpts) (*Recorder, error) {
+	var tap *systemAudioCapture
+	var extraFiles []*os.File
+	started := false
+	if usesSystemAudio(opts) {
+		count := 0
+		for _, device := range opts.Devices {
+			if device == SystemAudioDevice {
+				count++
+			}
+		}
+		if count > 1 {
+			return nil, fmt.Errorf("system-audio may only be selected once")
+		}
+		var err error
+		tap, err = startSystemAudio()
+		if err != nil {
+			return nil, err
+		}
+		opts.tapSampleRate, opts.tapChannels = tap.sampleRate, tap.channels
+		extraFiles = append(extraFiles, tap.reader)
+		defer func() {
+			if !started {
+				tap.close()
+			}
+		}()
+	}
 	var args []string
 	if len(opts.Devices) > 1 {
 		var err error
@@ -257,21 +280,21 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		if err != nil {
 			return nil, fmt.Errorf("failed to create PCM pipe: %w", err)
 		}
-		// ExtraFiles[0] becomes fd 3 in the child process. With multiple devices
+		// ExtraFiles begin at fd 3; a native tap occupies the first slot.
+		// With multiple devices
 		// the filter_complex exposes the mix as label [b] via asplit; pass that
 		// so the pipe receives mixed audio rather than just input 0.
 		mapLabel := ""
 		if len(opts.Devices) > 1 {
 			mapLabel = "[b]"
 		}
-		args = appendPCMPipeArgs(args, 3, mapLabel)
+		args = appendPCMPipeArgs(args, 3+len(extraFiles), mapLabel)
+		extraFiles = append(extraFiles, pcmWriteEnd)
 	}
 
 	cmd := exec.Command("ffmpeg", args...)
 
-	if opts.LivePCM {
-		cmd.ExtraFiles = []*os.File{pcmWriteEnd}
-	}
+	cmd.ExtraFiles = extraFiles
 
 	stdin, err := cmd.StdinPipe()
 	if err != nil {
@@ -290,6 +313,7 @@ func Start(opts RecordOpts) (*Recorder, error) {
 	}
 	r := &Recorder{
 		cmd:             cmd,
+		nativeTap:       tap,
 		stdin:           stdin,
 		Level:           make(chan float64, 10),
 		Done:            make(chan error, 1),
@@ -333,9 +357,33 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		r.PCMReader = pcmReadEnd
 	}
 
-	go r.discoverSourceOutputs()
+	started = true
+	if tap != nil {
+		go func() {
+			select {
+			case <-tap.failed:
+				r.Stop()
+			case <-r.done:
+			}
+		}()
+	}
+	if runtime.GOOS != "darwin" {
+		go r.discoverSourceOutputs()
+	}
 	go func() {
 		exitErr := cmd.Wait()
+		// FFmpeg disables its q-command reader for pipe inputs. A native
+		// recording stops with SIGINT instead, which finalizes outputs but
+		// returns 255. Do not hide other exit codes or unsolicited failures.
+		var processErr *exec.ExitError
+		if tap != nil && r.stopping.Load() && errors.As(exitErr, &processErr) && processErr.ExitCode() == 255 {
+			exitErr = nil
+		}
+		if tap != nil {
+			if err := tap.close(); err != nil {
+				exitErr = errors.Join(exitErr, err)
+			}
+		}
 		close(r.Level)
 		if exitErr != nil {
 			if tail := r.StderrTail(); tail != "" {
@@ -486,6 +534,17 @@ func (r *Recorder) discoverSourceOutputs() {
 }
 
 func (r *Recorder) Stop() {
+	r.stopOnce.Do(r.stop)
+}
+
+func (r *Recorder) stop() {
+	r.stopping.Store(true)
+	if r.nativeTap != nil {
+		_ = r.cmd.Process.Signal(os.Interrupt)
+		_ = r.nativeTap.close()
+		r.stdin.Close()
+		return
+	}
 	r.muteMu.Lock()
 	wasMuted := r.muted
 	ids := append([]int(nil), r.sourceOutputIDs...)

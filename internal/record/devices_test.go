@@ -1,9 +1,66 @@
 package record
 
 import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
+
+const avfoundationDevices = `[AVFoundation indev @ 0x123] AVFoundation video devices:
+[AVFoundation indev @ 0x123] [0] FaceTime Camera
+[AVFoundation indev @ 0x123] [1] Capture screen 0
+[AVFoundation indev @ 0x123] AVFoundation audio devices:
+[AVFoundation indev @ 0x123] [0] MacBook Pro Microphone
+[AVFoundation indev @ 0x123] [1] USB Audio [External]
+[in#0 @ 0x456] Error opening input: Input/output error
+`
+
+func TestListDevicesAVFoundation(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("AVFoundation discovery is macOS-specific")
+	}
+	for _, tc := range []struct {
+		name    string
+		output  string
+		want    []Device
+		wantErr bool
+	}{
+		{"audio only despite exit status", avfoundationDevices, []Device{
+			{Name: "MacBook Pro Microphone", Description: "MacBook Pro Microphone"},
+			{Name: "USB Audio [External]", Description: "USB Audio [External]"},
+		}, false},
+		{"failed enumeration", "Unknown input format: avfoundation", nil, true},
+		{"empty audio section", "[AVFoundation indev @ 0x123] AVFoundation audio devices:\n", nil, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			script := "#!/bin/sh\nif [ \"$*\" != \"-hide_banner -f avfoundation -list_devices true -i \" ]; then\n echo 'unexpected discovery arguments' >&2\n exit 2\nfi\ncat <<'DEVICES' >&2\n" + tc.output + "\nDEVICES\nexit 1\n"
+			if err := os.WriteFile(filepath.Join(dir, "ffmpeg"), []byte(script), 0755); err != nil {
+				t.Fatal(err)
+			}
+			t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+			got, err := listInputDevices()
+			if (err != nil) != tc.wantErr {
+				t.Fatalf("ListDevices() error = %v, wantErr %v", err, tc.wantErr)
+			}
+			if !reflect.DeepEqual(got, tc.want) {
+				t.Fatalf("listInputDevices() = %#v, want %#v", got, tc.want)
+			}
+			if !tc.wantErr && systemAudioAvailable() {
+				listed, err := ListDevices()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if len(listed) != len(got)+1 || listed[len(got)] != (Device{Name: SystemAudioDevice, Description: "System audio", IsMonitor: true}) {
+					t.Fatalf("native system audio missing from device list: %+v", listed)
+				}
+			}
+		})
+	}
+}
 
 func sampleDevices() []Device {
 	return []Device{

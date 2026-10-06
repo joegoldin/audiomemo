@@ -44,7 +44,10 @@ type RecordPickerResult struct {
 // Model
 // ---------------------------------------------------------------------------
 
+type recordPickerErrorMsg struct{ err error }
+
 type recordPickerModel struct {
+	err      error
 	state    recordPickerState
 	items    []rpItem     // ordered: aliases, groups, devices
 	selected map[int]bool // multi-select tracking
@@ -75,7 +78,7 @@ func RunRecordPicker(cfg *config.Config, opts ...tea.ProgramOption) (RecordPicke
 		return RecordPickerResult{Skipped: true}, err
 	}
 	if fm, ok := finalModel.(*recordPickerModel); ok {
-		return fm.result, nil
+		return fm.result, fm.err
 	}
 	return RecordPickerResult{Skipped: true}, nil
 }
@@ -91,7 +94,7 @@ func (m *recordPickerModel) Init() tea.Cmd {
 func (m *recordPickerModel) loadDevices() tea.Msg {
 	devices, err := record.ListDevices()
 	if err != nil {
-		return devicesLoadedMsg(nil)
+		return recordPickerErrorMsg{err: fmt.Errorf("failed to list audio devices: %w", err)}
 	}
 	return devicesLoadedMsg(devices)
 }
@@ -238,6 +241,12 @@ func (m *recordPickerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		return m, nil
+
+	case recordPickerErrorMsg:
+		m.err = msg.err
+		m.result.Skipped = true
+		m.state = RPDone
+		return m, tea.Quit
 
 	case devicesLoadedMsg:
 		m.buildItems([]record.Device(msg))
