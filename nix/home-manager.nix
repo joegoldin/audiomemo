@@ -35,7 +35,12 @@ in
             output_dir = "~/Recordings";
           };
           transcribe = {
-            default_backend = "elevenlabs";
+            default_backend = "auto";
+            nemo = {
+              binary = "nemo-speech"; # Install NeMo-Speech.cpp separately.
+              device = "auto"; # Or "vulkan:0" on Linux/AMD, "metal" on macOS.
+              diarize = true;
+            };
             elevenlabs = {
               api_key_file = config.age.secrets.elevenlabs_api_key.path;
               model = "scribe_v2";

@@ -1,4 +1,5 @@
 /audiomemo
+/.pi/tasks/
 /dist/
 /vendor/
 *.test

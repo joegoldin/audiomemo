@@ -1,7 +1,10 @@
 package transcribe
 
 import (
+	"context"
+	"errors"
 	"fmt"
+	"os"
 	"os/exec"
 
 	"github.com/joegoldin/audiomemo/internal/config"
@@ -13,36 +16,60 @@ func NewDispatcher(cfg *config.Config, backendOverride string) (Transcriber, err
 		backend = cfg.Transcribe.DefaultBackend
 	}
 
-	if backend != "" {
+	if backend != "" && backend != "auto" {
 		return newBackend(cfg, backend)
 	}
-
-	// Auto-detect: scan for configured API keys (elevenlabs preferred)
+	local := NewNemo(cfg.Transcribe.Nemo)
+	var fallback Transcriber
 	if cfg.Transcribe.ElevenLabs.APIKey != "" {
-		return NewElevenLabs(cfg.Transcribe.ElevenLabs.APIKey, cfg.Transcribe.ElevenLabs.Model, cfg.Transcribe.ElevenLabs.StoreInCloud), nil
+		fallback = NewElevenLabs(cfg.Transcribe.ElevenLabs.APIKey, cfg.Transcribe.ElevenLabs.Model, cfg.Transcribe.ElevenLabs.StoreInCloud)
 	}
-	if cfg.Transcribe.Deepgram.APIKey != "" {
-		return NewDeepgram(cfg.Transcribe.Deepgram.APIKey, cfg.Transcribe.Deepgram.Model), nil
-	}
-	if cfg.Transcribe.OpenAI.APIKey != "" {
-		return NewOpenAI(cfg.Transcribe.OpenAI.APIKey, cfg.Transcribe.OpenAI.Model), nil
-	}
-	if cfg.Transcribe.Mistral.APIKey != "" {
-		return NewMistral(cfg.Transcribe.Mistral.APIKey, cfg.Transcribe.Mistral.Model), nil
-	}
+	return &localFirst{local: local, fallback: fallback}, nil
+}
 
-	// Check for local whisper (whisper-cli, whisper, whisperx)
-	if w, found := DetectWhisper(cfg.Transcribe.Whisper.Model); found {
-		w.hfToken = cfg.Transcribe.Whisper.HFToken
-		return w, nil
-	}
+// Explicit backend choices never silently send local recordings to a service.
+// Only auto mode authorizes the configured ElevenLabs fallback.
+type localFirst struct {
+	local    Transcriber
+	fallback Transcriber
+}
 
-	return nil, fmt.Errorf("no transcription backend available. Set an API key (ELEVENLABS_API_KEY, DEEPGRAM_API_KEY, OPENAI_API_KEY, MISTRAL_API_KEY) or install whisper locally")
+func (f *localFirst) Name() string { return "auto" }
+func (f *localFirst) Transcribe(ctx context.Context, path string, opts TranscribeOpts) (*Result, error) {
+	if err := validateOpts(f.Name(), opts, true, false, false, false, false); err != nil {
+		return nil, err
+	}
+	if _, err := os.Stat(path); err != nil {
+		return nil, err
+	}
+	result, err := f.local.Transcribe(ctx, path, opts)
+	if err == nil {
+		return result, nil
+	}
+	if ctx.Err() != nil {
+		return nil, ctx.Err()
+	}
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return nil, err
+	}
+	if f.fallback == nil {
+		return nil, fmt.Errorf("local transcription failed (no ElevenLabs key configured): %w", err)
+	}
+	fmt.Fprintf(os.Stderr, "Local transcription failed: %v\nFalling back to ElevenLabs; the recording will be uploaded.\n", err)
+	// A local model name/path cannot be used as an ElevenLabs model ID.
+	opts.Model = ""
+	result, fallbackErr := f.fallback.Transcribe(ctx, path, opts)
+	if fallbackErr != nil {
+		return nil, errors.Join(err, fmt.Errorf("ElevenLabs fallback: %w", fallbackErr))
+	}
+	return result, nil
 }
 
 func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 	hfToken := cfg.Transcribe.Whisper.HFToken
 	switch name {
+	case "nemo", "local":
+		return NewNemo(cfg.Transcribe.Nemo), nil
 	case "whisper":
 		// Auto-detect best whisper variant
 		if w, found := DetectWhisper(cfg.Transcribe.Whisper.Model); found {
@@ -92,6 +119,6 @@ func newBackend(cfg *config.Config, name string) (Transcriber, error) {
 		}
 		return NewMistral(cfg.Transcribe.Mistral.APIKey, cfg.Transcribe.Mistral.Model), nil
 	default:
-		return nil, fmt.Errorf("unknown backend: %s (available: elevenlabs, whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)", name)
+		return nil, fmt.Errorf("unknown backend: %s (available: auto, nemo, elevenlabs, whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)", name)
 	}
 }

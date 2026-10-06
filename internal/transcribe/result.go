@@ -7,10 +7,27 @@ import (
 )
 
 type Result struct {
-	Text     string    `json:"text"`
-	Segments []Segment `json:"segments,omitempty"`
-	Language string    `json:"language,omitempty"`
-	Duration float64   `json:"duration,omitempty"`
+	Words        []Word        `json:"words,omitempty"`
+	SpeakerTurns []SpeakerTurn `json:"speaker_turns,omitempty"`
+	Text         string        `json:"text"`
+	Segments     []Segment     `json:"segments,omitempty"`
+	Language     string        `json:"language,omitempty"`
+	Duration     float64       `json:"duration,omitempty"`
+}
+
+type Word struct {
+	Word    string  `json:"word"`
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Speaker string  `json:"speaker,omitempty"`
+}
+
+// SpeakerTurns preserve overlapping activity; word attribution selects the
+// speaker with the most temporal overlap, not a claim to separate mixed voices.
+type SpeakerTurn struct {
+	Start   float64 `json:"start"`
+	End     float64 `json:"end"`
+	Speaker string  `json:"speaker"`
 }
 
 type Segment struct {

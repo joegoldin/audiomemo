@@ -26,27 +26,28 @@ const (
 type StartFunc func() (*record.Recorder, *transcribe.Streamer, string, error)
 
 type Model struct {
-	state        State
-	recorder     *record.Recorder
-	opts         record.RecordOpts
-	startTime    time.Time
-	elapsed      time.Duration
-	level        float64
-	vu           VUMeter
-	transcribe   bool // set when user presses Q to quit-and-transcribe
-	muted        bool
-	clipDone     bool // set when user presses q in clips mode (save clip, continue)
-	clipsMode    bool
-	clipNumber   int
-	savedMessage string // e.g. "Saved clip 3!"
-	startFunc    StartFunc
-	err          error
-	width        int
-	height       int
-	streamer     *transcribe.Streamer
-	transcript   TranscriptViewport
-	streamErr    error
-	streamNote   string // e.g. "live transcription unavailable: ..."
+	state         State
+	recorder      *record.Recorder
+	opts          record.RecordOpts
+	startTime     time.Time
+	elapsed       time.Duration
+	level         float64
+	vu            VUMeter
+	transcribe    bool // set when user presses Q to quit-and-transcribe
+	muted         bool
+	clipDone      bool // set when user presses q in clips mode (save clip, continue)
+	clipsMode     bool
+	clipNumber    int
+	savedMessage  string // e.g. "Saved clip 3!"
+	startFunc     StartFunc
+	err           error
+	width         int
+	height        int
+	streamer      *transcribe.Streamer
+	transcript    TranscriptViewport
+	streamWarning error
+	streamErr     error
+	streamNote    string // e.g. "live transcription unavailable: ..."
 }
 
 // ShouldTranscribe returns true if the user pressed Q to quit-and-transcribe.
@@ -80,6 +81,7 @@ type doneMsg struct{ err error }
 type committedMsg string
 type partialMsg string
 type streamErrMsg error
+type streamWarningMsg struct{ err error }
 
 func NewModel(rec *record.Recorder, opts record.RecordOpts) *Model {
 	return &Model{
@@ -132,7 +134,7 @@ func (m *Model) Init() tea.Cmd {
 		cmds = append(cmds, listenLevel(m.recorder), listenDone(m.recorder))
 	}
 	if m.streamer != nil {
-		cmds = append(cmds, listenCommitted(m.streamer), listenPartial(m.streamer), listenStreamErr(m.streamer))
+		cmds = append(cmds, listenCommitted(m.streamer), listenPartial(m.streamer), listenStreamErr(m.streamer), listenStreamWarning(m.streamer))
 	}
 	if m.state == StateReady {
 		return cmds[0] // just tickCmd for ready state
@@ -193,6 +195,16 @@ func listenStreamErr(s *transcribe.Streamer) tea.Cmd {
 	}
 }
 
+func listenStreamWarning(s *transcribe.Streamer) tea.Cmd {
+	return func() tea.Msg {
+		err, ok := <-s.Warning
+		if !ok {
+			return nil
+		}
+		return streamWarningMsg{err}
+	}
+}
+
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
@@ -241,6 +253,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case partialMsg:
 		m.transcript.SetPartial(string(msg))
 		return m, listenPartial(m.streamer)
+
+	case streamWarningMsg:
+		m.streamWarning = msg.err
+		return m, listenStreamWarning(m.streamer)
 
 	case streamErrMsg:
 		// Keep liveTranscription true so the transcript captured before the
@@ -310,7 +326,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.muted = false
 			cmds := []tea.Cmd{listenLevel(m.recorder), listenDone(m.recorder)}
 			if m.streamer != nil {
-				cmds = append(cmds, listenCommitted(m.streamer), listenPartial(m.streamer), listenStreamErr(m.streamer))
+				cmds = append(cmds, listenCommitted(m.streamer), listenPartial(m.streamer), listenStreamErr(m.streamer), listenStreamWarning(m.streamer))
 			}
 			return m, tea.Batch(cmds...)
 		}
@@ -400,6 +416,8 @@ func (m *Model) View() string {
 	parts = append(parts, sep, m.transcript.View())
 	if m.streamErr != nil {
 		parts = append(parts, streamErrStyle.Render(fmt.Sprintf("  ⚠ live transcription stopped: %v", m.streamErr)))
+	} else if m.streamWarning != nil {
+		parts = append(parts, dimStyle.Render(fmt.Sprintf("  %v", m.streamWarning)))
 	} else if m.streamNote != "" {
 		parts = append(parts, dimStyle.Render("  "+m.streamNote))
 	}

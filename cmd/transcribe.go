@@ -18,19 +18,19 @@ import (
 )
 
 var (
-	tBackend     string
-	tModel       string
-	tLanguage    string
-	tOutput      string
-	tFormat      string
-	tVerbose     bool
-	tCopy        bool
-	tConfig      string
-	tDiarize     bool
-	tSmartFormat bool
-	tPunctuate   bool
-	tFillerWords bool
-	tNumerals    bool
+	tBackend      string
+	tModel        string
+	tLanguage     string
+	tOutput       string
+	tFormat       string
+	tVerbose      bool
+	tCopy         bool
+	tConfig       string
+	tDiarize      bool
+	tSmartFormat  bool
+	tPunctuate    bool
+	tFillerWords  bool
+	tNumerals     bool
 	tQuiet        bool
 	tStoreInCloud bool
 )
@@ -38,9 +38,10 @@ var (
 var transcribeCmd = &cobra.Command{
 	Use:   "transcribe [flags] <file>",
 	Short: "Transcribe audio to text",
-	Long: `Transcribe audio files using local whisper or cloud APIs (Deepgram, OpenAI, Mistral).
+	Long: `Transcribe locally with NeMo-Speech.cpp (Parakeet + Nemotron diarization).
 
-By default, auto-detects the best available backend (ElevenLabs preferred). Use --backend to force a specific one.
+Default auto mode tries local first, then ElevenLabs if a key is configured.
+Use --backend nemo for local-only or --backend elevenlabs for cloud-only.
 
 Examples:
   transcribe recording.ogg
@@ -54,7 +55,7 @@ Examples:
 
 func init() {
 	transcribeCmd.AddCommand(transcribeLatestCmd)
-	transcribeCmd.PersistentFlags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (elevenlabs, whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
+	transcribeCmd.PersistentFlags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (auto, nemo, elevenlabs, whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
 	transcribeCmd.PersistentFlags().StringVarP(&tModel, "model", "m", "", "model name (backend-specific)")
 	transcribeCmd.PersistentFlags().StringVarP(&tLanguage, "language", "l", "", "language hint (ISO 639-1)")
 	transcribeCmd.PersistentFlags().StringVarP(&tOutput, "output", "o", "", "output file (default: stdout)")
@@ -125,6 +126,8 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 
 	if !cmd.Flags().Changed("diarize") {
 		switch backend.Name() {
+		case "auto", "nemo":
+			diarize = cfg.Transcribe.Nemo.Diarize
 		case "elevenlabs":
 			diarize = cfg.Transcribe.ElevenLabs.Diarize
 		case "deepgram":
@@ -158,9 +161,13 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	language := tLanguage
+	if language == "" {
+		language = cfg.Transcribe.Language
+	}
 	opts := transcribe.TranscribeOpts{
 		Model:       tModel,
-		Language:    tLanguage,
+		Language:    language,
 		Format:      transcribe.ParseFormat(tFormat),
 		Verbose:     tVerbose,
 		Diarize:     diarize,

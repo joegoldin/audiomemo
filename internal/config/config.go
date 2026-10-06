@@ -35,11 +35,22 @@ type TranscribeConfig struct {
 	DefaultBackend string           `toml:"default_backend"`
 	Language       string           `toml:"language"`
 	OutputFormat   string           `toml:"output_format"`
+	Nemo           NemoConfig       `toml:"nemo"`
 	Whisper        WhisperConfig    `toml:"whisper"`
 	Deepgram       DeepgramConfig   `toml:"deepgram"`
 	OpenAI         OpenAIConfig     `toml:"openai"`
 	Mistral        MistralConfig    `toml:"mistral"`
 	ElevenLabs     ElevenLabsConfig `toml:"elevenlabs"`
+}
+
+type NemoConfig struct {
+	Binary         string `toml:"binary"`
+	Model          string `toml:"model"`
+	LiveModel      string `toml:"live_model"`
+	DiarModel      string `toml:"diar_model"`
+	Device         string `toml:"device"`
+	Diarize        bool   `toml:"diarize"`
+	StartupTimeout int    `toml:"startup_timeout"` // seconds, including model loading
 }
 
 type WhisperConfig struct {
@@ -92,12 +103,18 @@ func Default() *Config {
 		Devices:      map[string]string{},
 		DeviceGroups: map[string][]string{},
 		Transcribe: TranscribeConfig{
-			OutputFormat: "text",
-			Whisper:      WhisperConfig{Model: "base", Binary: "whisper"},
-			Deepgram:     DeepgramConfig{Model: "nova-3", SmartFormat: true, Diarize: true, Punctuate: true, FillerWords: true, Numerals: true},
-			OpenAI:       OpenAIConfig{Model: "gpt-4o-transcribe"},
-			Mistral:      MistralConfig{Model: "voxtral-mini-latest"},
-			ElevenLabs:   ElevenLabsConfig{Model: "scribe_v2", Diarize: true},
+			DefaultBackend: "auto",
+			OutputFormat:   "text",
+			Nemo: NemoConfig{
+				Binary: "nemo-speech", Model: "parakeet-tdt", LiveModel: "nemotron-en",
+				DiarModel: "nemotron-3-diarization", Device: "auto", Diarize: true,
+				StartupTimeout: 120,
+			},
+			Whisper:    WhisperConfig{Model: "base", Binary: "whisper"},
+			Deepgram:   DeepgramConfig{Model: "nova-3", SmartFormat: true, Diarize: true, Punctuate: true, FillerWords: true, Numerals: true},
+			OpenAI:     OpenAIConfig{Model: "gpt-4o-transcribe"},
+			Mistral:    MistralConfig{Model: "voxtral-mini-latest"},
+			ElevenLabs: ElevenLabsConfig{Model: "scribe_v2", Diarize: true},
 		},
 	}
 }

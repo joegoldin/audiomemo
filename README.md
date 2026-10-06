@@ -24,7 +24,8 @@ audiomemo - record audio and transcribe it
 ## DESCRIPTION
 
 CLI for recording audio from PulseAudio/AVFoundation devices and
-transcribing via local whisper or cloud APIs (ElevenLabs, Deepgram, OpenAI, Mistral).
+transcribing locally with NeMo-Speech.cpp, with ElevenLabs fallback when configured.
+Whisper, Deepgram, OpenAI, and Mistral remain available as explicit backends.
 
 The binary dispatches on `argv[0]`: symlinks named `record`, `rect`, `recw`,
 or `transcribe` invoke those commands directly.
@@ -35,7 +36,8 @@ or `transcribe` invoke those commands directly.
 
 Record audio with a live TUI showing a streaming transcript. The cursor at
 the end of the transcript doubles as a VU meter (height and color track the
-mic level). Live transcription is always on when an ElevenLabs key is set.
+mic level). Live preview defaults to local NeMo, unless disabled with
+`--no-live-transcription`. Explicit backends and configured fallback are honored.
 When run without `-D`, an interactive device picker is shown first.
 
 The TUI is drawn on the terminal even when stdout is redirected, so
@@ -85,9 +87,10 @@ flags and positional name as `record`.
 ### transcribe
 
 Transcribe an audio file. Reads from stdin when file is `-`.
-Auto-detects the best available backend if `--backend` is not set.
+Defaults to local NeMo, with ElevenLabs fallback only if a key is configured.
+Use `--backend nemo` for local-only or `--backend elevenlabs` for cloud-only.
 
-    -b, --backend string    elevenlabs, whisper, whisper-cpp, whisperx,
+    -b, --backend string    auto, nemo, elevenlabs, whisper, whisper-cpp, whisperx,
                             ffmpeg-whisper, deepgram, openai, mistral
     -m, --model string      model name (backend-specific)
     -l, --language string   language hint (ISO 639-1)
@@ -135,9 +138,18 @@ desktop = "alsa_output.pci-0000_0c_00.1.hdmi-stereo.monitor"
 zoom = ["mic", "desktop"]
 
 [transcribe]
-default_backend = "elevenlabs"
+default_backend = "auto"       # local first; "nemo" means local-only
 language = "en"
 output_format = "text"
+
+[transcribe.nemo]
+binary = "nemo-speech"
+model = "parakeet-tdt"
+live_model = "nemotron-en"      # English; nemotron-3.5 for multilingual preview
+diar_model = "nemotron-3-diarization"
+device = "auto"                # cpu, metal, vulkan:0, cuda:0
+diarize = true                 # up to eight speakers
+startup_timeout = 120          # seconds to start the live server
 
 [transcribe.elevenlabs]
 api_key = ""
@@ -190,21 +202,46 @@ Multi-device recording mixes all inputs via ffmpeg amix.
 
 ## LIVE TRANSCRIPTION
 
-Whenever an ElevenLabs API key is configured, audio is streamed in realtime
-to ElevenLabs for live speech-to-text unless `--no-live-transcription` is
-passed. The transcript is the main content of the recording TUI; the cursor at
-the insertion point doubles as a VU meter.
+`record` starts a private loopback NeMo server for **Nemotron English 0.6B**
+live preview. The TUI shows partial and committed text while recording. Startup
+runs in the background; preview failure or lag does not block the saved audio.
+Preview buffering is bounded, so a slow startup can drop preview audio without
+dropping it from the recording. Pre-download models before recording.
 
-- Text appears as you talk (partial results in gray, committed text in white)
-- Auto-scrolls to show latest text; scroll up to browse history
-- `↓ live` indicator appears when scrolled up
-- Live transcript is saved incrementally to `<name>-live.txt` (crash-safe)
-- On quit, the live transcript is promoted to `<name>.txt`; quitting with `Q`
-  (or passing `-t`) then overwrites it with the batch result
-- If no ElevenLabs key is configured, recording shows a lone VU cursor and
-  transcripts are only produced by `Q` / `-t` batch runs
-- `recw` never starts live transcription and always runs a local Whisper batch
-  transcription after recording
+In default **auto** mode, a local startup or inference failure switches live
+preview to ElevenLabs if a key is configured. The UI reports the switch; audio
+already consumed by the failed stream is not replayed. `--backend nemo` prohibits
+cloud fallback, including live preview. Explicit non-streaming backends get a
+final batch pass only. The same selection is respected through
+`record --transcribe-args="--backend nemo"`.
+
+After recording, the live server is stopped and its model unloaded. When final
+transcription is requested (`-t` or `Q`), a fresh
+**Parakeet TDT v3** pass transcribes the original recording, followed by a separate
+**Nemotron 3 Diarization** process using the long-recording `v3-offline` chunked
+preset, not the short-recording full-attention mode. Word timestamps are aligned
+with speaker activity by maximum overlap. JSON preserves both words and original
+speaker turns (including overlapping activity); text and subtitles use one speaker
+per word. This does not separate simultaneous voices or identify people by name.
+
+- Live text is saved incrementally to `<recording>-live.txt`.
+- The final transcript is saved alongside the audio (`.txt`, `.json`, `.srt`, or `.vtt`).
+- `q` preserves the preview; `Q` or `-t` also runs the final pass.
+- `--no-live-transcription` disables preview; combine with `-t` for batch-only.
+- `recw` remains local Whisper-only, without live preview.
+- The upstream transcript-first TUI, VU cursor, and scrolling are unchanged.
+- Successful preview **never** skips a requested final pass.
+- Final local failure retries the original recording through ElevenLabs only in
+  auto mode and only with a configured key. Failed/canceled final processing
+  leaves the preview file intact. Cancellation does not trigger a cloud upload.
+- Other cloud providers and Whisper require explicit selection; they are not
+  silently used as additional fallbacks.
+- Existing configs with `default_backend = "elevenlabs"` remain cloud-only.
+  Change that setting to `"auto"` to opt into the new default behavior.
+
+Models are loaded sequentially to reduce peak memory. There is no enforced 8 GB
+memory cap, and hardware-specific speed and long-recording memory usage need to
+be measured on the target machine.
 
 ## STDOUT AND PIPING
 
@@ -272,9 +309,11 @@ so another program can render the transcript and the mic level live.
     {"type":"end","t":9130,"reason":"signal","path":"/home/joe/Recordings/recording-2026-08-18T14-30-05.ogg","exit_code":0}
 
 Every event carries `type` and `t` (milliseconds since the stream opened).
+The start backend is the initial preview selection; fallback notices arrive as
+nonfatal stream errors. A batch backend of `auto` denotes the local-first policy.
 
-    start    once, after the pipeline is up. `mode` is `live` (partials will
-             arrive), `batch` (no partials, one final after recording), or
+    start    once, after the pipeline is up. `mode` is `live` (preview
+             enabled; local models may still be loading), `batch` (no partials, one final after recording), or
              `none` (no transcript at all).
     level    `rms` on 0..1 and `db` in dBFS, coalesced to 20 Hz.
     partial  in-progress text; replaces the previous partial.
@@ -319,9 +358,55 @@ home.packages = [ pkgs.audiomemo ];
 
 ## DEPENDENCIES
 
-Runtime: `ffmpeg`. Optional: `whisper-cpp` (local transcription).
+Runtime: `ffmpeg` and **NeMo-Speech.cpp 0.2.0 or newer**, built with ASR,
+diarization, and HTTP/WebSocket support. Optional: `whisper-cpp` for the explicit
+Whisper backend. The Nix package supplies ffmpeg and whisper-cpp; install NeMo
+separately on PATH or set `transcribe.nemo.binary` to its absolute path.
 
-The nix package wraps the binary with ffmpeg and whisper-cpp in PATH.
+### Local model setup (macOS / Linux)
+
+Use the [official NeMo-Speech.cpp installer](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/main/docs/install.md).
+Inspect the installer before running it. Select **Metal** on Apple Silicon,
+**Vulkan** on Linux with an AMD GPU, or **CPU** on either platform. The upstream
+Linux installer defaults to CPU when no NVIDIA GPU is detected, so select Vulkan
+explicitly for AMD. Native source builds are also supported upstream.
+
+```sh
+# After installing the appropriate nemo-speech build:
+nemo-speech doctor
+nemo-speech pull nemotron-en
+nemo-speech pull parakeet-tdt
+nemo-speech pull nemotron-3-diarization
+
+# Verify local-only transcription; no cloud fallback:
+audiomemo transcribe --backend nemo --format json recording.ogg
+```
+
+These indexed names select Q8 model artifacts (about 1.5 GB total downloads).
+NeMo verifies downloads against its model index. Missing indexed models download
+on first use; explicit local GGUF paths and cached models allow offline operation.
+Set `NEMO_SPEECH_MODEL_DIR` to choose the cache directory. For an offline-only
+workflow, also use `--backend nemo` so an available ElevenLabs key cannot cause
+an upload after a local failure.
+
+For Linux/AMD, set `transcribe.nemo.device = "vulkan:0"`; for Apple Silicon use
+`"metal"`, or leave `"auto"` for runtime selection. Use `"cpu"` when the GPU
+backend is unavailable. No CUDA or Python dependency is required by audiomemo's
+NeMo integration. Model licenses are separate from the runtime: Parakeet v3 is
+CC-BY-4.0, English Nemotron uses the NVIDIA Open Model License, and Nemotron 3
+Diarization uses OpenMDW 1.1.
+
+### Native integration check
+
+The default tests use fake subprocesses and local WebSocket servers, not cloud
+APIs or model downloads. With the runtime and all three models already cached:
+
+```sh
+AUDIOMEMO_NEMO_TEST_BINARY=/path/to/nemo-speech \
+  go test ./internal/transcribe -run TestNemoNative -v
+```
+
+The opt-in check uses only the repository's `testdata/test.ogg`.
 
 ## FILES
 

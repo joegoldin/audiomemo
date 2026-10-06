@@ -172,24 +172,21 @@ func TestBackendFromArgsHonoursTheShortFlag(t *testing.T) {
 	}
 }
 
-// With no explicit backend the subprocess autodetects from the same config
-// this process loaded, so resolving it here gives the same answer.
-func TestBackendFromArgsFallsBackToAutodetect(t *testing.T) {
+// With no explicit backend the subprocess uses the same local-first policy.
+func TestBackendFromArgsDefaultsToLocalFirst(t *testing.T) {
 	cfg := config.Default()
 	cfg.Transcribe.Deepgram.APIKey = "dg-key"
-	if got := backendFromArgs(cfg, []string{"memo.ogg"}); got != "deepgram" {
-		t.Errorf("backendFromArgs = %q, want deepgram from autodetect", got)
+	if got := backendFromArgs(cfg, []string{"memo.ogg"}); got != "auto" {
+		t.Errorf("backendFromArgs = %q, want auto even with a Deepgram key", got)
 	}
 }
 
-func TestBackendFromArgsIsEmptyWhenNoBackendExists(t *testing.T) {
+func TestBackendFromArgsPreservesConfiguredDefault(t *testing.T) {
 	cfg := config.Default()
-	cfg.Transcribe.Whisper.Binary = "definitely-not-a-real-binary"
-	got := backendFromArgs(cfg, []string{"memo.ogg"})
-	// Autodetect may still find a local whisper on the developer's machine;
-	// the contract is only that it never panics and never invents a name.
-	if got != "" && !strings.Contains(got, "whisper") {
-		t.Errorf("backendFromArgs = %q, want empty or a whisper variant", got)
+	cfg.Transcribe.DefaultBackend = "deepgram"
+	cfg.Transcribe.Deepgram.APIKey = "dg-key"
+	if got := backendFromArgs(cfg, []string{"memo.ogg"}); got != "deepgram" {
+		t.Errorf("backendFromArgs = %q, want configured deepgram", got)
 	}
 }
 

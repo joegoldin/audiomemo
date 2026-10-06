@@ -8,9 +8,22 @@ output_dir = "~/Recordings"
 # device = "Built-in Microphone"
 
 [transcribe]
-# default_backend = "elevenlabs"
+# auto: NeMo locally, then ElevenLabs on failure if a key is configured.
+# Use "nemo" for local-only (never uploads), or "elevenlabs" for cloud-only.
+default_backend = "auto"
 # language = "en"
 # output_format = "text"
+
+[transcribe.nemo]
+# Requires NeMo-Speech.cpp 0.2.0+ with ASR, diarization and HTTP support.
+# Indexed models download on first use; pre-download for reliable live startup.
+# binary = "nemo-speech"
+# model = "parakeet-tdt"
+# live_model = "nemotron-en"           # English; use nemotron-3.5 for multilingual
+# diar_model = "nemotron-3-diarization"
+# device = "auto"                    # cpu, metal (macOS), vulkan:0 (Linux/AMD)
+# diarize = true                     # up to 8 speakers; --diarize=false disables
+# startup_timeout = 120              # live startup timeout in seconds
 
 [transcribe.whisper]
 # model = "base"
@@ -32,7 +45,8 @@ output_dir = "~/Recordings"
 # model = "scribe_v2"
 # diarize = true
 # store_in_cloud = false    # delete transcript from cloud after fetching
-# When configured, `record -t` streams audio for live transcription.
+# Used after local failure in auto mode, or explicitly with --backend elevenlabs.
+# This authorizes uploading audio to ElevenLabs when local transcription fails.
 
 [transcribe.openai]
 # api_key = ""

@@ -8,8 +8,10 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/joegoldin/audiomemo/internal/config"
@@ -19,6 +21,7 @@ import (
 	"github.com/joegoldin/audiomemo/internal/tui"
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 var (
@@ -53,11 +56,10 @@ var recordCmd = &cobra.Command{
 at the end of the transcript doubles as a VU meter, changing height and color
 with the mic level.
 
-Live transcription streams automatically whenever an ElevenLabs API key is
-configured unless --no-live-transcription is passed. Press q to stop and keep
-the live transcript at <name>.txt; press Q to stop and additionally run the
-higher-quality batch transcription, which overwrites <name>.txt (the live
-preview is kept at <name>-live.txt either way).
+Live preview uses local NeMo first, with ElevenLabs fallback only in auto mode
+when a key is configured. --no-live-transcription disables preview. Press q to
+save the recording and preview, or Q (or pass -t) to also run final transcription.
+Preview text is preserved at <name>-live.txt; the final pass writes <name>.txt.
 
 An optional name can be passed as positional arguments to label the recording.
 Multiple words are joined with underscores.
@@ -329,17 +331,9 @@ func runRecord(cmd *cobra.Command, args []string) error {
 
 	outputPath := filepath.Join(outputDir, record.GenerateFilename(format, name))
 
-	var streamer *transcribe.Streamer
-	streamNote := ""
-	if liveDisabled {
-		streamNote = "live transcription disabled"
-	} else if cfg.Transcribe.ElevenLabs.APIKey != "" {
-		streamer = transcribe.NewStreamer(
-			cfg.Transcribe.ElevenLabs.APIKey,
-			cfg.Transcribe.ElevenLabs.StoreInCloud,
-		)
-	} else {
-		streamNote = "live transcription unavailable: no ElevenLabs API key configured"
+	streamer, streamNote, err := recordLiveStreamer(cfg, liveDisabled)
+	if err != nil {
+		return err
 	}
 
 	opts := stops.apply(record.RecordOpts{
@@ -357,6 +351,17 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+
+	defer func() {
+		rec.Stop()
+		_ = rec.Wait()
+		if streamer != nil {
+			streamer.Stop()
+		}
+		if rec.PCMReader != nil {
+			rec.PCMReader.Close()
+		}
+	}()
 
 	var streamStartErr error
 	if streamer != nil {
@@ -388,10 +393,31 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		// headless path prints, so that line is redundant here.
 		return runRecordStream(cfg, opts, rec, streamer, streamStartErr, shouldTranscribe)
 	} else if rNoTUI {
-		fmt.Fprintf(os.Stderr, "Recording to %s (%s)...\n", outputPath, stops.hint())
-		if err := <-rec.Done; err != nil {
-			return err
+		if streamer != nil {
+			go func() {
+				for warning := range streamer.Warning {
+					fmt.Fprintf(os.Stderr, "Warning: %v\n", warning)
+				}
+			}()
+			go func() {
+				for err := range streamer.Err {
+					fmt.Fprintf(os.Stderr, "Live preview failed: %v\n", err)
+				}
+			}()
 		}
+		fmt.Fprintf(os.Stderr, "Recording to %s (%s)...\n", outputPath, stops.hint())
+		sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stopSignals()
+		select {
+		case <-sigCtx.Done():
+			stopSignals()
+			rec.Stop()
+		case <-rec.Done:
+		}
+		if err := rec.Wait(); err != nil {
+			fmt.Fprintf(os.Stderr, "Warning: recording exited with error: %v\n", err)
+		}
+
 	} else {
 		if streamer != nil {
 			model = tui.NewModelWithStreamer(rec, opts, streamer)
@@ -447,9 +473,6 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		// <base>.txt with the diarized full result. The live preview is
 		// preserved at <base>-live.txt.
 		if stdoutMode == printPath {
-			// Path mode leaves the batch pass writing straight to stdout, as
-			// it always has: this is the transcript an interactive Q echoes
-			// after the TUI tears down.
 			return runPostTranscribe(outputPath, false)
 		}
 		text, _, err := runPostTranscribeCapture(outputPath, wantsStdoutText(stdoutMode))
@@ -475,14 +498,6 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 	var savedPaths []string
 	clipNumber := 1
 	savedMessage := ""
-	apiKey := ""
-	streamNote := "live transcription disabled"
-	if !liveDisabled {
-		apiKey = cfg.Transcribe.ElevenLabs.APIKey
-		if apiKey == "" {
-			streamNote = "live transcription unavailable: no ElevenLabs API key configured"
-		}
-	}
 
 	for {
 		outputPath := filepath.Join(outputDir, record.GenerateClipFilename(format, name, clipNumber))
@@ -495,7 +510,7 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 			SampleRate:  sampleRate,
 			Channels:    channels,
 			OutputPath:  outputPath,
-			LivePCM:     apiKey != "",
+			LivePCM:     !liveDisabled,
 		})
 
 		// Streamers are single-use (Stop closes their channels), so each clip
@@ -503,14 +518,18 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 		// startRec so it can be stopped after the clip's TUI exits.
 		var clipStreamer *transcribe.Streamer
 		startRec := func() (*record.Recorder, *transcribe.Streamer, string, error) {
+			s, note, err := recordLiveStreamer(cfg, liveDisabled)
+			if err != nil {
+				return nil, nil, "", err
+			}
+			opts.LivePCM = s != nil
 			rec, err := record.Start(opts)
 			if err != nil {
 				return nil, nil, "", err
 			}
-			if apiKey == "" {
-				return rec, nil, streamNote, nil
+			if s == nil {
+				return rec, nil, note, nil
 			}
-			s := transcribe.NewStreamer(apiKey, cfg.Transcribe.ElevenLabs.StoreInCloud)
 			if err := s.Start(context.Background(), rec.PCMReader, livePath); err != nil {
 				// Nothing else reads the PCM pipe; drain it so ffmpeg doesn't
 				// block on pipe writes. This clip records without live text;
@@ -593,6 +612,9 @@ func newPostTranscribeCmd(audioPath string, plainText bool) (*exec.Cmd, []string
 	args, err := buildPostTranscribeArgs(audioPath, rTranscribeArgs, rVerbose, rWhisperShortcut, plainText, exec.LookPath)
 	if err != nil {
 		return nil, nil, err
+	}
+	if rConfig != "" {
+		args = append([]string{"--config", rConfig}, args...)
 	}
 	return exec.Command(self, append([]string{"transcribe"}, args...)...), args, nil
 }
@@ -699,4 +721,46 @@ func promoteLiveTranscript(audioPath string) (string, error) {
 		return "", err
 	}
 	return dest, nil
+}
+
+// Preview must obey the same privacy choice and configuration as the final pass.
+// Parse its relevant flags separately so recording never mutates transcribe's
+// global flag state. Unrelated final-pass options remain for the subprocess.
+func recordLiveStreamer(cfg *config.Config, disabled bool) (*transcribe.Streamer, string, error) {
+	if disabled {
+		return nil, "live transcription disabled", nil
+	}
+	flags := pflag.NewFlagSet("preview", pflag.ContinueOnError)
+	flags.SetOutput(io.Discard)
+	flags.ParseErrorsWhitelist.UnknownFlags = true
+	backend := flags.StringP("backend", "b", "", "")
+	configPath := flags.String("config", "", "")
+	language := flags.StringP("language", "l", "", "")
+	store := flags.Bool("store-in-cloud", false, "")
+	if err := flags.Parse(strings.Fields(rTranscribeArgs)); err != nil {
+		return nil, "", err
+	}
+	previewCfg := *cfg
+	if *configPath != "" {
+		loaded, err := config.LoadFrom(*configPath)
+		if err != nil {
+			return nil, "", err
+		}
+		previewCfg = *loaded
+		previewCfg.ApplyEnv()
+	}
+	if flags.Changed("language") {
+		previewCfg.Transcribe.Language = *language
+	}
+	if flags.Changed("store-in-cloud") {
+		previewCfg.Transcribe.ElevenLabs.StoreInCloud = *store
+	}
+	s, err := transcribe.NewLiveStreamer(&previewCfg, *backend)
+	if err != nil {
+		return nil, "", err
+	}
+	if s == nil {
+		return nil, "selected backend supports final transcription only", nil
+	}
+	return s, "", nil
 }

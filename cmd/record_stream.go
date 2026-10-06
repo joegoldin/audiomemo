@@ -112,7 +112,7 @@ func runRecordStream(
 		Mode:        mode,
 	}
 	if streamer != nil {
-		startEv.Backend = transcribe.RealtimeBackendName
+		startEv.Backend = streamer.Name()
 	}
 	em.Start(startEv)
 
@@ -120,9 +120,10 @@ func runRecordStream(
 	pumps.Add(1)
 	go func() { defer pumps.Done(); pumpLevels(em, rec.Level, stream.NewLevelThrottle(levelInterval)) }()
 	if streamer != nil {
-		pumps.Add(2)
+		pumps.Add(3)
 		go func() { defer pumps.Done(); pumpText(em, streamer.Partial, streamer.Committed) }()
 		go func() { defer pumps.Done(); pumpErrors(em, streamer.Err) }()
+		go func() { defer pumps.Done(); pumpErrors(em, streamer.Warning) }()
 	}
 
 	// --no-tui has no signal handler today: Ctrl+C kills the process and
@@ -231,7 +232,7 @@ func emitFinal(em *stream.Emitter, cfg *config.Config, audioPath string, streame
 		Text:           liveText,
 		Path:           audioPath,
 		TranscriptPath: transcriptPath,
-		Backend:        transcribe.RealtimeBackendName,
+		Backend:        streamer.Name(),
 		Source:         stream.SourceLive,
 	})
 }
