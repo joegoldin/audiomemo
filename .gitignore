@@ -2,6 +2,7 @@
 /.pi/tasks/
 /dist/
 /vendor/
+/scripts/__pycache__/
 *.test
 result
 testdata/*.txt

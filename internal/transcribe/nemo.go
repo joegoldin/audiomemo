@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"unicode"
@@ -28,6 +30,19 @@ func (n *Nemo) Name() string              { return "nemo" }
 func (n *Nemo) Transcribe(ctx context.Context, audioPath string, opts TranscribeOpts) (*Result, error) {
 	if err := validateOpts(n.Name(), opts, true, false, false, false, false); err != nil {
 		return nil, err
+	}
+	if opts.Diarize {
+		for _, threshold := range []struct {
+			name  string
+			value *float64
+		}{
+			{"diar_onset", n.config.DiarOnset},
+			{"diar_offset", n.config.DiarOffset},
+		} {
+			if threshold.value != nil && (math.IsNaN(*threshold.value) || *threshold.value <= 0 || *threshold.value > 1) {
+				return nil, fmt.Errorf("transcribe.nemo.%s must be greater than 0 and at most 1", threshold.name)
+			}
+		}
 	}
 	if _, err := exec.LookPath(n.config.Binary); err != nil {
 		return nil, fmt.Errorf("NeMo-Speech.cpp binary %q unavailable: %w (install nemo-speech with ASR, diarization and HTTP support)", n.config.Binary, err)
@@ -82,7 +97,19 @@ func (n *Nemo) Transcribe(ctx context.Context, audioPath string, opts Transcribe
 		}
 	}
 	if opts.Diarize && result.Text != "" {
-		data, err = runNemo(ctx, n.config.Binary, []string{"diarize", wav, "--model", n.config.DiarModel, "--device", n.config.Device, "--preset", "v3-offline", "--format", "json"}, opts.Verbose)
+		// Keep the runtime defaults unless explicitly calibrated for the audio;
+		// lowering thresholds can add labels without separating speakers.
+		diarArgs := []string{
+			"diarize", wav, "--model", n.config.DiarModel, "--device", n.config.Device,
+			"--preset", "v3-offline", "--format", "json",
+		}
+		if n.config.DiarOnset != nil {
+			diarArgs = append(diarArgs, "--onset", strconv.FormatFloat(*n.config.DiarOnset, 'f', -1, 64))
+		}
+		if n.config.DiarOffset != nil {
+			diarArgs = append(diarArgs, "--offset", strconv.FormatFloat(*n.config.DiarOffset, 'f', -1, 64))
+		}
+		data, err = runNemo(ctx, n.config.Binary, diarArgs, opts.Verbose)
 		if err != nil {
 			return nil, err
 		}
@@ -157,15 +184,42 @@ func assignSpeakers(result *Result) {
 	first := 0
 	for i := range result.Words {
 		word := &result.Words[i]
+		word.Speaker = ""
+		// Overlapping ASR words need not arrive in timestamp order.
+		if i > 0 && word.Start < result.Words[i-1].Start {
+			first = 0
+		}
 		for first < len(turns) && turns[first].End < word.Start {
 			first++
 		}
-		best := 0.0
+		type coverage struct{ duration, end float64 }
+		covered := make(map[string]coverage)
+		var speakers []string
 		for j := first; j < len(turns) && turns[j].Start <= word.End; j++ {
 			turn := turns[j]
-			overlap := min(word.End, turn.End) - max(word.Start, turn.Start)
-			if overlap > best || (word.Start == word.End && word.Start >= turn.Start && word.Start <= turn.End && word.Speaker == "") {
-				best, word.Speaker = overlap, turn.Speaker
+			if word.Start == word.End && word.Start >= turn.Start && word.Start <= turn.End && word.Speaker == "" {
+				word.Speaker = turn.Speaker
+			}
+			start, end := max(word.Start, turn.Start), min(word.End, turn.End)
+			if end <= start {
+				continue
+			}
+			c, seen := covered[turn.Speaker]
+			if !seen {
+				speakers = append(speakers, turn.Speaker)
+			} else {
+				start = max(start, c.end)
+			}
+			// Sum the union of a speaker's turns, not just its longest turn;
+			// duplicates and overlapping turns must not count twice.
+			c.duration += max(0, end-start)
+			c.end = max(c.end, end)
+			covered[turn.Speaker] = c
+		}
+		best := 0.0
+		for _, speaker := range speakers {
+			if duration := covered[speaker].duration; duration > best {
+				best, word.Speaker = duration, speaker
 			}
 		}
 		// Punctuation can have zero duration outside a diarizer's speech bounds.

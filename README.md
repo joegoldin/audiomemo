@@ -95,7 +95,7 @@ Use `--backend nemo` for local-only or `--backend elevenlabs` for cloud-only.
     -m, --model string      model name (backend-specific)
     -l, --language string   language hint (ISO 639-1)
     -f, --format string     output format: text, json, srt, vtt (default: text)
-    -o, --output string     output file (default: stdout)
+    -o, --output string     output file (replaces automatic sidecar)
     -v, --verbose           show progress and timing
     -C, --copy              copy output to clipboard
         --diarize           enable speaker diarization
@@ -103,6 +103,36 @@ Use `--backend nemo` for local-only or `--backend elevenlabs` for cloud-only.
         --punctuate         add punctuation (Deepgram)
         --store-in-cloud    keep transcript in cloud provider (default: false)
         --config string     config file path
+
+### transcribe voice-memo (aliases: vm, voice-memos)
+
+On macOS, transcribe a downloaded recording directly from Voice Memos:
+
+    transcribe vm                         # searchable picker
+    transcribe vm "Team meeting"         # app display name or audio filename
+    transcribe voice-memo meeting -b nemo # unique substring, local-only
+    transcribe vm "Team meeting" -f srt -o meeting.srt
+
+Names are case-insensitive. Exact names take priority over substring matches;
+ambiguous names open the picker rather than choosing a recording silently.
+Type to search, use ↑/↓ to move, Enter to transcribe, and Esc to cancel.
+Without a terminal, pass a unique name or filename. The picker stays off piped
+stdout, so `transcribe vm | pbcopy` receives only the transcript.
+
+All normal transcription flags apply, including the configured backend and its
+cloud fallback policy. Use `--backend nemo` to prohibit cloud uploads.
+Transcripts are saved in `record.output_dir` (default `~/Recordings`) using the
+underlying audio filename with the selected transcript extension. `--output`
+overrides that destination; `--quiet` suppresses stdout but still saves the file.
+The Voice Memos library is read-only: recordings are not renamed or moved, and
+transcript sidecars are not written into it.
+
+Only locally downloaded `.m4a` recordings are available. Open Voice Memos to
+sync/download missing recordings. macOS may require **System Settings > Privacy
+& Security > Full Disk Access** for your terminal; restart it after granting
+access. If library access is unavailable, export a recording from Voice Memos
+and use `transcribe exported.m4a`. Library metadata is read using macOS's built-in
+`sqlite3`; if no metadata database exists, filenames are used instead of titles.
 
 ### device
 
@@ -263,9 +293,22 @@ transcription is requested (`-t` or `Q`), a fresh
 **Parakeet TDT v3** pass transcribes the original recording, followed by a separate
 **Nemotron 3 Diarization** process using the long-recording `v3-offline` chunked
 preset, not the short-recording full-attention mode. Word timestamps are aligned
-with speaker activity by maximum overlap. JSON preserves both words and original
-speaker turns (including overlapping activity); text and subtitles use one speaker
-per word. This does not separate simultaneous voices or identify people by name.
+with speaker activity by total overlap per speaker, without double-counting
+overlapping turns. JSON preserves both words and original speaker turns (including
+overlapping activity); text and subtitles use one speaker per word. Unlabeled
+speech is marked `unassigned` in diarized text and subtitles, not attributed to
+the previous speaker. JSON leaves its speaker field absent. This does not separate
+simultaneous voices or identify people by name.
+
+Local final diarization preserves the runtime's thresholds unless you explicitly
+set `transcribe.nemo.diar_onset` or `diar_offset` in TOML (each must be greater
+than 0 and at most 1). Lower values accept weaker speaker activity, but can
+create overlapping false detections and merge speakers during word assignment.
+Higher values can leave words unlabeled. More labeled words do not necessarily
+mean better speaker separation: calibrate against known speaker changes, not
+label coverage alone. These controls do not change the recognized text.
+See [diarization validation](docs/diarization-validation.md) for measured AMI
+reference results, scoring policy, and reproducible local scoring commands.
 
 - Live text is saved incrementally to `<recording>-live.txt`.
 - The final transcript is saved alongside the audio (`.txt`, `.json`, `.srt`, or `.vtt`).

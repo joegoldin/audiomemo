@@ -154,3 +154,102 @@ func TestRunNemoFailureAndCancellation(t *testing.T) {
 		t.Fatalf("cancel: %v", err)
 	}
 }
+
+func TestNemoDiarizationThresholds(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		settings string
+		onset    string
+		offset   string
+	}{
+		{"defaults", "", "", ""},
+		{"configured", "diar_onset = 0.45\ndiar_offset = 0.35\n", "0.45", "0.35"},
+		{"onset only", "diar_onset = 0.45\n", "0.45", ""},
+		{"offset only", "diar_offset = 0.35\n", "", "0.35"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			fake, audio, log := fakeNemo(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte("[transcribe.nemo]\n"+tt.settings), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.LoadFrom(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Transcribe.Nemo.Binary = fake.Binary
+			if _, err := NewNemo(cfg.Transcribe.Nemo).Transcribe(t.Context(), audio, TranscribeOpts{Diarize: true}); err != nil {
+				t.Fatal(err)
+			}
+			args, err := os.ReadFile(log)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, threshold := range []struct{ flag, value string }{{"--onset", tt.onset}, {"--offset", tt.offset}} {
+				if threshold.value == "" {
+					if strings.Contains(string(args), threshold.flag+"\n") {
+						t.Errorf("unset threshold must preserve runtime defaults: %s", threshold.flag)
+					}
+				} else if want := threshold.flag + "\n" + threshold.value + "\n"; !strings.Contains(string(args), want) {
+					t.Errorf("diarization missing %q in %s", want, args)
+				}
+			}
+		})
+	}
+}
+
+func TestNemoRejectsInvalidDiarizationThresholds(t *testing.T) {
+	for _, setting := range []string{"diar_onset = 0", "diar_onset = -0.1", "diar_onset = 1.1", "diar_offset = 0", "diar_offset = 1.1", "diar_onset = nan", "diar_offset = inf"} {
+		t.Run(setting, func(t *testing.T) {
+			fake, audio, log := fakeNemo(t)
+			path := filepath.Join(t.TempDir(), "config.toml")
+			if err := os.WriteFile(path, []byte("[transcribe.nemo]\n"+setting+"\n"), 0600); err != nil {
+				t.Fatal(err)
+			}
+			cfg, err := config.LoadFrom(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			cfg.Transcribe.Nemo.Binary = fake.Binary
+			_, err = NewNemo(cfg.Transcribe.Nemo).Transcribe(t.Context(), audio, TranscribeOpts{Diarize: true})
+			if err == nil || !strings.Contains(err.Error(), "diar_") {
+				t.Fatalf("expected threshold validation error, got %v", err)
+			}
+			if _, err := os.Stat(log); !os.IsNotExist(err) {
+				t.Fatal("invalid settings must fail before running inference")
+			}
+		})
+	}
+}
+
+func TestAssignSpeakersCombinesTurnCoverage(t *testing.T) {
+	r := &Result{
+		Words: []Word{{Word: "covered", Start: 0, End: 1}},
+		SpeakerTurns: []SpeakerTurn{
+			{Start: 0, End: 0.3, Speaker: "a"},
+			{Start: 0.2, End: 0.7, Speaker: "b"},
+			{Start: 0.5, End: 0.8, Speaker: "a"},
+		},
+	}
+	assignSpeakers(r)
+	if r.Words[0].Speaker != "a" {
+		t.Fatalf("combined 0.6s of a must beat 0.5s of b, got %q", r.Words[0].Speaker)
+	}
+	// Duplicate/overlapping turns must not artificially increase a speaker's vote.
+	r.SpeakerTurns = []SpeakerTurn{{Start: 0, End: 0.4, Speaker: "a"}, {Start: 0, End: 0.4, Speaker: "a"}, {Start: 0.4, End: 1, Speaker: "b"}}
+	assignSpeakers(r)
+	if r.Words[0].Speaker != "b" {
+		t.Fatalf("duplicate coverage must not count twice, got %q", r.Words[0].Speaker)
+	}
+}
+
+func TestAssignSpeakersHandlesOverlappingWordOrder(t *testing.T) {
+	r := &Result{
+		Words:        []Word{{Word: "later", Start: 2, End: 3}, {Word: "earlier", Start: 0.5, End: 1}},
+		SpeakerTurns: []SpeakerTurn{{Start: 0, End: 1, Speaker: "a"}, {Start: 2, End: 3, Speaker: "b"}},
+	}
+	assignSpeakers(r)
+	if r.Words[0].Speaker != "b" || r.Words[1].Speaker != "a" {
+		t.Fatalf("speaker assignment must not require monotonically increasing word starts: %+v", r.Words)
+	}
+}

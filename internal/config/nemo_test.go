@@ -3,6 +3,7 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 )
 
@@ -25,6 +26,8 @@ default_backend = "nemo"
 binary = "/opt/nemo/bin/nemo-speech"
 device = "vulkan:0"
 diarize = false
+diar_onset = 0.45
+diar_offset = 0.35
 startup_timeout = 45
 `), 0600); err != nil {
 		t.Fatal(err)
@@ -43,7 +46,7 @@ startup_timeout = 45
 	if err != nil {
 		t.Fatal(err)
 	}
-	if reloaded.Transcribe.Nemo != cfg.Transcribe.Nemo {
+	if !reflect.DeepEqual(reloaded.Transcribe.Nemo, cfg.Transcribe.Nemo) {
 		t.Fatal("NeMo config changed on round trip")
 	}
 }

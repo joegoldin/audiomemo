@@ -21,6 +21,9 @@ default_backend = "auto"
 # model = "parakeet-tdt"
 # live_model = "nemotron-en"           # English; use nemotron-3.5 for multilingual
 # diar_model = "nemotron-3-diarization"
+# Optional calibration, NOT defaults: lower values can invent overlapping speakers.
+# diar_onset = 0.3                   # activation probability, (0, 1]
+# diar_offset = 0.3                  # deactivation probability, (0, 1]
 # device = "auto"                    # cpu, metal (macOS), vulkan:0 (Linux/AMD)
 # diarize = true                     # up to 8 speakers; --diarize=false disables
 # startup_timeout = 120              # live startup timeout in seconds

@@ -52,15 +52,7 @@ func (r *Result) Format(f OutputFormat) string {
 
 func (r *Result) formatText() string {
 	segs := r.segments()
-	// If no segment has a speaker, return plain text
-	hasSpeaker := false
-	for _, seg := range segs {
-		if seg.Speaker != "" {
-			hasSpeaker = true
-			break
-		}
-	}
-	if !hasSpeaker {
+	if !r.hasSpeakers(segs) {
 		return r.Text
 	}
 	var b strings.Builder
@@ -68,11 +60,7 @@ func (r *Result) formatText() string {
 		if i > 0 {
 			b.WriteString("\n")
 		}
-		if seg.Speaker != "" {
-			fmt.Fprintf(&b, "%s: %s", seg.Speaker, strings.TrimSpace(seg.Text))
-		} else {
-			b.WriteString(strings.TrimSpace(seg.Text))
-		}
+		fmt.Fprintf(&b, "%s: %s", displaySpeaker(seg.Speaker), strings.TrimSpace(seg.Text))
 	}
 	return b.String()
 }
@@ -80,6 +68,25 @@ func (r *Result) formatText() string {
 func (r *Result) formatJSON() string {
 	b, _ := json.MarshalIndent(r, "", "  ")
 	return string(b)
+}
+
+func (r *Result) hasSpeakers(segs []Segment) bool {
+	if len(r.SpeakerTurns) > 0 {
+		return true
+	}
+	for _, seg := range segs {
+		if seg.Speaker != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func displaySpeaker(speaker string) string {
+	if speaker == "" {
+		return "unassigned"
+	}
+	return speaker
 }
 
 func (r *Result) segments() []Segment {
@@ -91,12 +98,14 @@ func (r *Result) segments() []Segment {
 
 func (r *Result) formatSRT() string {
 	var b strings.Builder
-	for i, seg := range r.segments() {
+	segs := r.segments()
+	hasSpeaker := r.hasSpeakers(segs)
+	for i, seg := range segs {
 		fmt.Fprintf(&b, "%d\n", i+1)
 		fmt.Fprintf(&b, "%s --> %s\n", srtTime(seg.Start), srtTime(seg.End))
 		text := strings.TrimSpace(seg.Text)
-		if seg.Speaker != "" {
-			text = fmt.Sprintf("[%s] %s", seg.Speaker, text)
+		if hasSpeaker {
+			text = fmt.Sprintf("[%s] %s", displaySpeaker(seg.Speaker), text)
 		}
 		fmt.Fprintf(&b, "%s\n\n", text)
 	}
@@ -106,11 +115,13 @@ func (r *Result) formatSRT() string {
 func (r *Result) formatVTT() string {
 	var b strings.Builder
 	b.WriteString("WEBVTT\n\n")
-	for _, seg := range r.segments() {
+	segs := r.segments()
+	hasSpeaker := r.hasSpeakers(segs)
+	for _, seg := range segs {
 		fmt.Fprintf(&b, "%s --> %s\n", vttTime(seg.Start), vttTime(seg.End))
 		text := strings.TrimSpace(seg.Text)
-		if seg.Speaker != "" {
-			text = fmt.Sprintf("[%s] %s", seg.Speaker, text)
+		if hasSpeaker {
+			text = fmt.Sprintf("[%s] %s", displaySpeaker(seg.Speaker), text)
 		}
 		fmt.Fprintf(&b, "%s\n\n", text)
 	}

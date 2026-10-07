@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -54,11 +53,11 @@ Examples:
 }
 
 func init() {
-	transcribeCmd.AddCommand(transcribeLatestCmd)
+	transcribeCmd.AddCommand(transcribeLatestCmd, transcribeVoiceMemoCmd)
 	transcribeCmd.PersistentFlags().StringVarP(&tBackend, "backend", "b", "", "transcription backend (auto, nemo, elevenlabs, whisper, whisper-cpp, whisperx, ffmpeg-whisper, deepgram, openai, mistral)")
 	transcribeCmd.PersistentFlags().StringVarP(&tModel, "model", "m", "", "model name (backend-specific)")
 	transcribeCmd.PersistentFlags().StringVarP(&tLanguage, "language", "l", "", "language hint (ISO 639-1)")
-	transcribeCmd.PersistentFlags().StringVarP(&tOutput, "output", "o", "", "output file (default: stdout)")
+	transcribeCmd.PersistentFlags().StringVarP(&tOutput, "output", "o", "", "output file (replaces automatic sidecar)")
 	transcribeCmd.PersistentFlags().StringVarP(&tFormat, "format", "f", "text", "output format (text, json, srt, vtt)")
 	transcribeCmd.PersistentFlags().BoolVarP(&tVerbose, "verbose", "v", false, "show progress and timing info")
 	transcribeCmd.PersistentFlags().BoolVarP(&tCopy, "copy", "C", false, "copy output to clipboard")
@@ -80,7 +79,11 @@ func ExecuteTranscribe() {
 }
 
 func runTranscribe(cmd *cobra.Command, args []string) error {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	return runTranscribeFile(cmd, args[0], transcriptPathFor(args[0], transcribe.ParseFormat(tFormat)))
+}
+
+func runTranscribeFile(cmd *cobra.Command, audioPath, savePath string) error {
+	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer cancel()
 
 	var cfg *config.Config
@@ -95,8 +98,6 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 	}
 	cfg.ApplyEnv()
 
-	audioPath := args[0]
-
 	// Handle stdin
 	if audioPath == "-" {
 		tmp, err := bufferStdin()
@@ -105,6 +106,7 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 		}
 		defer os.Remove(tmp)
 		audioPath = tmp
+		savePath = transcriptPathFor(tmp, transcribe.ParseFormat(tFormat))
 	}
 
 	// Apply --store-in-cloud override before creating backend.
@@ -214,9 +216,10 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 
 	output := result.Format(opts.Format)
 
-	// Auto-save transcript alongside the audio file.
-	if audioPath != "" && audioPath != "-" {
-		transcriptPath := transcriptPathFor(audioPath, opts.Format)
+	// An explicit destination replaces auto-save; comparison runs must not
+	// overwrite an existing transcript beside the original recording.
+	if savePath != "" && tOutput == "" {
+		transcriptPath := savePath
 		if err := os.WriteFile(transcriptPath, []byte(output), 0644); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save transcript to %s: %v\n", transcriptPath, err)
 		} else if tVerbose {

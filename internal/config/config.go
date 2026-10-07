@@ -44,13 +44,15 @@ type TranscribeConfig struct {
 }
 
 type NemoConfig struct {
-	Binary         string `toml:"binary"`
-	Model          string `toml:"model"`
-	LiveModel      string `toml:"live_model"`
-	DiarModel      string `toml:"diar_model"`
-	Device         string `toml:"device"`
-	Diarize        bool   `toml:"diarize"`
-	StartupTimeout int    `toml:"startup_timeout"` // seconds, including model loading
+	Binary         string   `toml:"binary"`
+	Model          string   `toml:"model"`
+	LiveModel      string   `toml:"live_model"`
+	DiarModel      string   `toml:"diar_model"`
+	DiarOnset      *float64 `toml:"diar_onset,omitempty"`
+	DiarOffset     *float64 `toml:"diar_offset,omitempty"`
+	Device         string   `toml:"device"`
+	Diarize        bool     `toml:"diarize"`
+	StartupTimeout int      `toml:"startup_timeout"` // seconds, including model loading
 }
 
 type WhisperConfig struct {

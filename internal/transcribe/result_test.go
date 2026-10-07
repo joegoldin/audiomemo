@@ -62,3 +62,30 @@ func TestResultFormatTextFallsBackWhenNoSegments(t *testing.T) {
 		t.Errorf("expected fallback text, got:\n%s", out)
 	}
 }
+
+func TestDiarizedOutputMarksUnassignedSpeech(t *testing.T) {
+	r := &Result{
+		Text:     "First. Uncertain.",
+		Segments: []Segment{{Start: 0, End: 1, Text: "First.", Speaker: "speaker_1"}, {Start: 2, End: 3, Text: "Uncertain."}},
+	}
+	for _, format := range []OutputFormat{FormatText, FormatSRT, FormatVTT} {
+		output := r.Format(format)
+		if !strings.Contains(output, "unassigned") {
+			t.Errorf("%s must not silently imply the previous speaker continues: %s", format, output)
+		}
+	}
+	if strings.Contains(r.Format(FormatJSON), "unassigned") {
+		t.Fatal("display labels must not become invented JSON speaker identities")
+	}
+	// A diarizer can return speech turns that cover none of the ASR's words.
+	r.Segments = []Segment{{Start: 2, End: 3, Text: "Uncertain."}}
+	r.SpeakerTurns = []SpeakerTurn{{Start: 0, End: 1, Speaker: "speaker_1"}}
+	if !strings.Contains(r.Format(FormatText), "unassigned") {
+		t.Fatal("fully unassigned diarized output must be explicit")
+	}
+	// Plain, non-diarized transcription remains plain text.
+	r.SpeakerTurns = nil
+	if strings.Contains(r.Format(FormatText), "unassigned") {
+		t.Fatal("non-diarized output must not acquire speaker labels")
+	}
+}
