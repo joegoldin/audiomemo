@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -9,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestVoiceMemoTranscription(t *testing.T) {
@@ -192,5 +194,70 @@ printf '%s' '{"text":"Voice memo transcript","segments":[{"start":0,"end":1,"tex
 		if err == nil || !strings.Contains(stderr, "no downloaded Voice Memos found") {
 			t.Fatalf("empty library %s: %s %v", keyword, stderr, err)
 		}
+	}
+}
+
+func TestVoiceMemoListPages(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS Voice Memos integration")
+	}
+	home := t.TempDir()
+	library := filepath.Join(home, "Library/Group Containers/group.com.apple.VoiceMemos.shared/Recordings")
+	if err := os.MkdirAll(library, 0700); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 23; i++ {
+		path := filepath.Join(library, fmt.Sprintf("memo-%02d.m4a", i))
+		if err := os.WriteFile(path, []byte("synthetic audio"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		date := time.Unix(1700000000+int64(i), 0)
+		if err := os.Chtimes(path, date, date); err != nil {
+			t.Fatal(err)
+		}
+	}
+	invoke := func(args ...string) (string, error) {
+		command := exec.Command(testBinary, append([]string{"transcribe", "vm"}, args...)...)
+		command.Env = append(os.Environ(), "HOME="+home, "PATH=")
+		out, err := command.CombinedOutput()
+		return string(out), err
+	}
+	for _, tt := range []struct {
+		args         []string
+		first, count int
+	}{
+		{[]string{"list"}, 22, 10}, {[]string{"LIST", "1"}, 22, 10},
+		{[]string{"list", "2"}, 12, 10}, {[]string{"list", "3"}, 2, 3},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			out, err := invoke(tt.args...)
+			if err != nil {
+				t.Fatalf("list: %s %v", out, err)
+			}
+			lines := strings.Split(strings.TrimSpace(out), "\n")
+			if len(lines) != tt.count+1 {
+				t.Fatalf("expected %d results, got %d: %s", tt.count, len(lines)-1, out)
+			}
+			for i := 0; i < tt.count; i++ {
+				if !strings.Contains(lines[i+1], fmt.Sprintf("memo-%02d.m4a", tt.first-i)) {
+					t.Fatalf("wrong page/order: %s", out)
+				}
+			}
+		})
+	}
+	for _, args := range [][]string{{"list", "0"}, {"list", "-1"}, {"list", "nope"}, {"list", "4"}, {"list", "9223372036854775807"}, {"list", "99999999999999999999999"}, {"list", "2", "extra"}} {
+		t.Run(strings.Join(args, " "), func(t *testing.T) {
+			out, err := invoke(args...)
+			if err == nil {
+				t.Fatalf("invalid page accepted: %s", out)
+			}
+			if !strings.Contains(out, "page") && !strings.Contains(out, "unknown shorthand flag") {
+				t.Fatalf("expected page/flag error: %s", out)
+			}
+		})
+	}
+	out, err := invoke("--", "list", "2")
+	if err == nil || !strings.Contains(out, `no downloaded Voice Memo matches "list 2"`) {
+		t.Fatalf("literal list name was interpreted as pagination: %s %v", out, err)
 	}
 }

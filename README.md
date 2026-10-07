@@ -110,7 +110,8 @@ On macOS, transcribe a downloaded recording directly from Voice Memos:
 
     transcribe vm                         # searchable picker
     transcribe vm latest                  # newest downloaded memo, no picker
-    transcribe vm list                    # dates, display titles, durations, file links; newest first
+    transcribe vm list                    # newest 10 memos, with titles, durations, links
+    transcribe vm list 2                  # next 10 memos (results 11–20)
     transcribe vm "Team meeting"         # app display name or audio filename
     transcribe voice-memo meeting -b nemo # newest matching memo, local-only
     transcribe vm -- "latest"            # search for a memo named "latest"
@@ -121,8 +122,10 @@ exact names or filenames, then substrings, then fuzzy matches (query characters
 appearing in order). Within the best matching group, the newest downloaded memo
 wins, using the recording date from Apple's metadata or file modification time
 when metadata is unavailable. Named queries and `latest` never open the picker.
-`list` prints dates, display titles from the database, durations, and file links
-without running transcription or saving a transcript. Titles prefer
+`list [page]` prints dates, display titles from the database, durations, and file
+links without running transcription or saving a transcript. Each page contains
+up to 10 memos, newest first. Page numbers start at 1; omitting the number shows
+page 1. Invalid and out-of-range pages return an error. Titles prefer
 `ZENCRYPTEDTITLE`, then `ZCUSTOMLABELFORSORTING`, then the legacy custom label;
 filenames are the fallback when no title is available. Durations use `m:ss` or
 `h:mm:ss`, rounded to the nearest second (`—` when metadata is unavailable).

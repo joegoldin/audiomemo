@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"unicode"
@@ -22,7 +23,7 @@ import (
 )
 
 var transcribeVoiceMemoCmd = &cobra.Command{
-	Use:     "voice-memo [name | latest | list]",
+	Use:     "voice-memo [name | latest | list [page]]",
 	Aliases: []string{"vm", "voice-memos"},
 	Short:   "Transcribe a macOS Voice Memo by name or pick one interactively",
 	Long: `Transcribe a downloaded recording from the macOS Voice Memos library.
@@ -30,8 +31,9 @@ var transcribeVoiceMemoCmd = &cobra.Command{
 Match a display name or filename, case-insensitively: exact matches first,
 then substrings, then fuzzy matches (characters in order). Multiple matches
 select the newest recording in the best matching group.
-Use latest to transcribe the newest downloaded memo, or list to show all memos
-newest first without transcribing. Both keywords are case-insensitive.
+Use latest to transcribe the newest downloaded memo, or list [page] to show
+10 memos per page, newest first, without transcribing. Pages start at 1;
+omitting the page shows page 1. Both keywords are case-insensitive.
 Use -- before a name to search for a literal name such as latest or list.
 Without a name, open a searchable picker. Enter selects; Esc cancels.
 
@@ -43,6 +45,7 @@ Examples:
   transcribe vm
   transcribe vm latest --backend nemo
   transcribe vm list
+  transcribe vm list 2
   transcribe vm -- latest
   transcribe vm "Team meeting" --backend nemo
   transcribe voice-memo meeting --format srt --output meeting.srt`,
@@ -56,11 +59,29 @@ func runTranscribeVoiceMemo(cmd *cobra.Command, args []string) error {
 	}
 	query := strings.TrimSpace(strings.Join(args, " "))
 	latest := false
-	if len(args) == 1 && cmd.ArgsLenAtDash() != 0 {
-		switch strings.ToLower(query) {
+	if len(args) > 0 && cmd.ArgsLenAtDash() != 0 {
+		switch strings.ToLower(strings.TrimSpace(args[0])) {
 		case "latest":
-			latest = true
+			latest = len(args) == 1
 		case "list":
+			if len(args) > 2 {
+				return fmt.Errorf("usage: transcribe vm list [page]")
+			}
+			page := 1
+			if len(args) == 2 {
+				page, err = strconv.Atoi(args[1])
+				if err != nil || page < 1 {
+					return fmt.Errorf("Voice Memo page must be a positive integer")
+				}
+			}
+			const pageSize = 10
+			pages := (len(recordings)-1)/pageSize + 1
+			// Check the page before multiplying so huge inputs cannot overflow.
+			if page > pages {
+				return fmt.Errorf("Voice Memo page %d is out of range; choose 1–%d", page, pages)
+			}
+			start := (page - 1) * pageSize
+			recordings = recordings[start:min(start+pageSize, len(recordings))]
 			output := cmd.OutOrStdout()
 			terminal := false
 			if file, ok := output.(*os.File); ok {
