@@ -110,7 +110,7 @@ On macOS, transcribe a downloaded recording directly from Voice Memos:
 
     transcribe vm                         # searchable picker
     transcribe vm latest                  # newest downloaded memo, no picker
-    transcribe vm list                    # list dates, names, filenames; newest first
+    transcribe vm list                    # dates, display titles, durations, file links; newest first
     transcribe vm "Team meeting"         # app display name or audio filename
     transcribe voice-memo meeting -b nemo # newest matching memo, local-only
     transcribe vm -- "latest"            # search for a memo named "latest"
@@ -121,8 +121,14 @@ exact names or filenames, then substrings, then fuzzy matches (query characters
 appearing in order). Within the best matching group, the newest downloaded memo
 wins, using the recording date from Apple's metadata or file modification time
 when metadata is unavailable. Named queries and `latest` never open the picker.
-`list` prints dates, quoted names, and filenames without running transcription
-or saving a transcript.
+`list` prints dates, display titles from the database, durations, and file links
+without running transcription or saving a transcript. Titles prefer
+`ZENCRYPTEDTITLE`, then `ZCUSTOMLABELFORSORTING`, then the legacy custom label;
+filenames are the fallback when no title is available. Durations use `m:ss` or
+`h:mm:ss`, rounded to the nearest second (`—` when metadata is unavailable).
+Terminals get hyperlinked filenames; piped output gets escaped `file://` URLs.
+Opening versus revealing a linked file in Finder depends on your terminal's
+file-link handling.
 
 Quotes alone do not escape keywords: the shell removes them. Use `--` to force
 name matching, as in `transcribe vm -- "latest"` or `transcribe vm -- "list"`.

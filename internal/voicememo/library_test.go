@@ -6,6 +6,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -105,4 +106,59 @@ func TestReadLibraryEmptyAndMissing(t *testing.T) {
 			t.Errorf("expected error for %s", dir)
 		}
 	}
+}
+
+func TestReadLibraryDisplayTitle(t *testing.T) {
+	if runtime.GOOS != "darwin" {
+		t.Skip("macOS SQLite metadata")
+	}
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "memo.m4a"), []byte("audio"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	db := filepath.Join(dir, "CloudRecordings.db")
+	sql := `CREATE TABLE ZCLOUDRECORDING (ZCUSTOMLABEL TEXT, ZCUSTOMLABELFORSORTING TEXT, ZENCRYPTEDTITLE TEXT, ZPATH TEXT, ZDATE REAL, ZDURATION REAL, ZLOCALDURATION REAL);
+ INSERT INTO ZCLOUDRECORDING VALUES ('2026-10-07T21:48:14Z','Sorted meeting title','Pretty meeting title','memo.m4a',800000001,709.55,700);`
+	if out, err := exec.Command("/usr/bin/sqlite3", db, sql).CombinedOutput(); err != nil {
+		t.Fatalf("fixture: %s %v", out, err)
+	}
+	for _, tt := range []struct{ update, want string }{
+		{"", "Pretty meeting title"},
+		{"UPDATE ZCLOUDRECORDING SET ZENCRYPTEDTITLE = ' ';", "Sorted meeting title"},
+		{"UPDATE ZCLOUDRECORDING SET ZCUSTOMLABELFORSORTING = NULL;", "2026-10-07T21:48:14Z"},
+		{"UPDATE ZCLOUDRECORDING SET ZCUSTOMLABEL = '';", "memo"},
+	} {
+		if tt.update != "" {
+			if out, err := exec.Command("/usr/bin/sqlite3", db, tt.update).CombinedOutput(); err != nil {
+				t.Fatalf("update: %s %v", out, err)
+			}
+		}
+		got, err := readLibrary(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got[0].Duration == nil || *got[0].Duration != 709.55 {
+			t.Fatalf("missing or incorrect database duration: %v", got[0].Duration)
+		}
+		if got[0].Name != tt.want {
+			t.Errorf("name = %q, want %q", got[0].Name, tt.want)
+		}
+	}
+	for _, update := range []string{"UPDATE ZCLOUDRECORDING SET ZDURATION = NULL;", "UPDATE ZCLOUDRECORDING SET ZLOCALDURATION = NULL;"} {
+		if out, err := exec.Command("/usr/bin/sqlite3", db, update).CombinedOutput(); err != nil {
+			t.Fatalf("update: %s %v", out, err)
+		}
+		got, err := readLibrary(context.Background(), dir)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if strings.Contains(update, "ZDURATION") {
+			if got[0].Duration == nil || *got[0].Duration != 700 {
+				t.Fatal("missing local-duration fallback")
+			}
+		} else if got[0].Duration != nil {
+			t.Fatal("absent duration must stay unknown")
+		}
+	}
+
 }

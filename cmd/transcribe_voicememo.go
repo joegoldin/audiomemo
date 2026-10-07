@@ -2,11 +2,17 @@ package cmd
 
 import (
 	"fmt"
+	"io"
+	"math"
+	"net/url"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"text/tabwriter"
+	"unicode"
+
+	"github.com/charmbracelet/x/ansi"
+	"github.com/mattn/go-isatty"
 
 	"github.com/joegoldin/audiomemo/internal/config"
 	"github.com/joegoldin/audiomemo/internal/transcribe"
@@ -55,16 +61,12 @@ func runTranscribeVoiceMemo(cmd *cobra.Command, args []string) error {
 		case "latest":
 			latest = true
 		case "list":
-			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
-			if _, err := fmt.Fprintln(w, "DATE\tNAME\tFILE"); err != nil {
-				return err
+			output := cmd.OutOrStdout()
+			terminal := false
+			if file, ok := output.(*os.File); ok {
+				terminal = isatty.IsTerminal(file.Fd())
 			}
-			for _, recording := range recordings {
-				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", recording.Date.Local().Format("2006-01-02 15:04:05 MST"), strconv.Quote(recording.Name), strconv.Quote(filepath.Base(recording.Path))); err != nil {
-					return err
-				}
-			}
-			return w.Flush()
+			return writeVoiceMemoList(output, recordings, terminal)
 		}
 	}
 	if len(args) > 0 && !latest {
@@ -100,6 +102,43 @@ func runTranscribeVoiceMemo(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "Transcribing %s\n", selected.Name)
 	return runTranscribeFile(cmd, selected.Path, savePath)
+}
+
+func writeVoiceMemoList(output io.Writer, recordings []voicememo.Recording, hyperlinks bool) error {
+	w := tabwriter.NewWriter(output, 0, 4, 2, ' ', 0)
+	if _, err := fmt.Fprintln(w, "DATE\tNAME\tDURATION\tFILE"); err != nil {
+		return err
+	}
+	for _, recording := range recordings {
+		link := (&url.URL{Scheme: "file", Path: recording.Path}).String()
+		if hyperlinks {
+			link = ansi.SetHyperlink(link) + voiceMemoListText(filepath.Base(recording.Path)) + ansi.ResetHyperlink()
+		}
+		if _, err := fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", recording.Date.Local().Format("2006-01-02 15:04:05 MST"), voiceMemoListText(recording.Name), voiceMemoDuration(recording.Duration), link); err != nil {
+			return err
+		}
+	}
+	return w.Flush()
+}
+
+func voiceMemoListText(text string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, text)
+}
+
+func voiceMemoDuration(duration *float64) string {
+	if duration == nil || math.IsNaN(*duration) || math.IsInf(*duration, 0) || *duration < 0 {
+		return "—"
+	}
+	seconds := int64(math.Round(*duration))
+	if seconds >= 3600 {
+		return fmt.Sprintf("%d:%02d:%02d", seconds/3600, seconds/60%60, seconds%60)
+	}
+	return fmt.Sprintf("%d:%02d", seconds/60, seconds%60)
 }
 
 func voiceMemoTranscriptPath(audioPath string) (string, error) {

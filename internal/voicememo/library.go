@@ -14,9 +14,10 @@ import (
 )
 
 type Recording struct {
-	Name string
-	Path string
-	Date time.Time
+	Name     string
+	Path     string
+	Date     time.Time
+	Duration *float64 // Seconds; nil when duration metadata is unavailable.
 }
 
 // List reads Apple's library without modifying its database or recordings.
@@ -53,16 +54,45 @@ func libraryError(err error) error {
 
 func readLibrary(ctx context.Context, dir string) ([]Recording, error) {
 	var rows []struct {
-		Name string  `json:"name"`
-		Path string  `json:"path"`
-		Date float64 `json:"date"`
+		Name     string   `json:"name"`
+		Path     string   `json:"path"`
+		Date     float64  `json:"date"`
+		Duration *float64 `json:"duration"`
 	}
 	db := filepath.Join(dir, "CloudRecordings.db")
 	if _, err := os.Stat(db); err == nil {
 		// Use the system SQLite CLI to avoid a cgo dependency. Read-only mode still
 		// sees the WAL, unlike copying just the database while Voice Memos is open.
-		out, err := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", db,
-			"SELECT COALESCE(ZCUSTOMLABEL, '') AS name, COALESCE(ZPATH, '') AS path, COALESCE(ZDATE, 0) AS date FROM ZCLOUDRECORDING").Output()
+		schema, err := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", db, "PRAGMA table_info(ZCLOUDRECORDING)").Output()
+		if err != nil {
+			return nil, fmt.Errorf("read Voice Memos schema: %w", err)
+		}
+		var columns []struct {
+			Name string `json:"name"`
+		}
+		if err := json.Unmarshal(schema, &columns); err != nil {
+			return nil, fmt.Errorf("decode Voice Memos schema: %w", err)
+		}
+		available := make(map[string]bool)
+		for _, column := range columns {
+			available[column.Name] = true
+		}
+		// Newer libraries store the visible title separately from the timestamp
+		// in ZCUSTOMLABEL. Keep older schemas readable without those columns.
+		name := "''"
+		for _, column := range []string{"ZCUSTOMLABEL", "ZCUSTOMLABELFORSORTING", "ZENCRYPTEDTITLE"} {
+			if available[column] {
+				name = fmt.Sprintf("COALESCE(NULLIF(TRIM(%s), ''), %s)", column, name)
+			}
+		}
+		duration := "NULL"
+		for _, column := range []string{"ZLOCALDURATION", "ZDURATION"} {
+			if available[column] {
+				duration = fmt.Sprintf("COALESCE(%s, %s)", column, duration)
+			}
+		}
+		query := fmt.Sprintf("SELECT %s AS name, COALESCE(ZPATH, '') AS path, COALESCE(ZDATE, 0) AS date, %s AS duration FROM ZCLOUDRECORDING", name, duration)
+		out, err := exec.CommandContext(ctx, "/usr/bin/sqlite3", "-readonly", "-json", db, query).Output()
 		if err != nil {
 			return nil, fmt.Errorf("read Voice Memos metadata: %w", err)
 		}
@@ -80,7 +110,7 @@ func readLibrary(ctx context.Context, dir string) ([]Recording, error) {
 			continue
 		}
 		name := filepath.Base(row.Path)
-		metadata[name] = Recording{Name: row.Name, Date: time.Unix(978307200+int64(row.Date), 0)}
+		metadata[name] = Recording{Name: row.Name, Date: time.Unix(978307200+int64(row.Date), 0), Duration: row.Duration}
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
