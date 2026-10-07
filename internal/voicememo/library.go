@@ -120,10 +120,11 @@ func readLibrary(ctx context.Context, dir string) ([]Recording, error) {
 	return recordings, nil
 }
 
-// Match prefers exact display names or filenames over substring matches.
+// Match prefers exact names, then substrings, then ordered-character matches.
+// It preserves the input order so a newest-first library stays newest first.
 func Match(recordings []Recording, query string) []Recording {
 	query = strings.ToLower(strings.TrimSpace(query))
-	var exact, partial []Recording
+	var exact, partial, fuzzy []Recording
 	for _, recording := range recordings {
 		name := strings.ToLower(recording.Name)
 		file := strings.ToLower(filepath.Base(recording.Path))
@@ -131,10 +132,31 @@ func Match(recordings []Recording, query string) []Recording {
 			exact = append(exact, recording)
 		} else if strings.Contains(name, query) || strings.Contains(file, query) {
 			partial = append(partial, recording)
+		} else if matchCharacters(name, query) || matchCharacters(file, query) {
+			fuzzy = append(fuzzy, recording)
 		}
 	}
 	if len(exact) > 0 {
 		return exact
 	}
-	return partial
+	if len(partial) > 0 {
+		return partial
+	}
+	return fuzzy
+}
+
+func matchCharacters(text, query string) bool {
+	remaining := []rune(query)
+	if len(remaining) == 0 {
+		return true
+	}
+	for _, r := range text {
+		if r == remaining[0] {
+			remaining = remaining[1:]
+			if len(remaining) == 0 {
+				return true
+			}
+		}
+	}
+	return false
 }

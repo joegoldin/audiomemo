@@ -109,15 +109,29 @@ Use `--backend nemo` for local-only or `--backend elevenlabs` for cloud-only.
 On macOS, transcribe a downloaded recording directly from Voice Memos:
 
     transcribe vm                         # searchable picker
+    transcribe vm latest                  # newest downloaded memo, no picker
+    transcribe vm list                    # list dates, names, filenames; newest first
     transcribe vm "Team meeting"         # app display name or audio filename
-    transcribe voice-memo meeting -b nemo # unique substring, local-only
+    transcribe voice-memo meeting -b nemo # newest matching memo, local-only
+    transcribe vm -- "latest"            # search for a memo named "latest"
     transcribe vm "Team meeting" -f srt -o meeting.srt
 
-Names are case-insensitive. Exact names take priority over substring matches;
-ambiguous names open the picker rather than choosing a recording silently.
-Type to search, use ↑/↓ to move, Enter to transcribe, and Esc to cancel.
-Without a terminal, pass a unique name or filename. The picker stays off piped
-stdout, so `transcribe vm | pbcopy` receives only the transcript.
+Names and the `latest`/`list` keywords are case-insensitive. Matching prefers
+exact names or filenames, then substrings, then fuzzy matches (query characters
+appearing in order). Within the best matching group, the newest downloaded memo
+wins, using the recording date from Apple's metadata or file modification time
+when metadata is unavailable. Named queries and `latest` never open the picker.
+`list` prints dates, quoted names, and filenames without running transcription
+or saving a transcript.
+
+Quotes alone do not escape keywords: the shell removes them. Use `--` to force
+name matching, as in `transcribe vm -- "latest"` or `transcribe vm -- "list"`.
+Put transcription flags before `--`.
+
+With no arguments, the picker remains interactive: type to search, use ↑/↓ to
+move, Enter to transcribe, and Esc to cancel. Without a terminal, pass a name,
+filename, or `latest`. The picker stays off piped stdout, so
+`transcribe vm | pbcopy` receives only the transcript.
 
 All normal transcription flags apply, including the configured backend and its
 cloud fallback policy. Use `--backend nemo` to prohibit cloud uploads.

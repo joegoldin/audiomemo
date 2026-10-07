@@ -41,6 +41,7 @@ while [ "$#" -gt 0 ]; do
  esac
 done
 base="${audio##*/}"
+printf '%s\n' "$base" >> "$VM_TEST_SELECTED"
 printf '%s' '{"text":"Voice memo transcript","segments":[{"start":0,"end":1,"text":"Voice memo transcript"}]}' > "$out/${base%.*}.json"
 `
 	if err := os.WriteFile(filepath.Join(stubDir, "whisper"), []byte(script), 0700); err != nil {
@@ -53,8 +54,8 @@ printf '%s' '{"text":"Voice memo transcript","segments":[{"start":0,"end":1,"tex
 	}
 	invoke := func(args ...string) (string, string, error) {
 		t.Helper()
-		command := exec.Command(testBinary, append([]string{"transcribe"}, append(args, "--config", cfg, "--backend", "whisper")...)...)
-		command.Env = append(os.Environ(), "HOME="+home, "PATH="+stubDir)
+		command := exec.Command(testBinary, append([]string{"transcribe", "--config", cfg, "--backend", "whisper"}, args...)...)
+		command.Env = append(os.Environ(), "HOME="+home, "PATH="+stubDir, "VM_TEST_SELECTED="+filepath.Join(home, "selected.log"))
 		var stdout, stderr bytes.Buffer
 		command.Stdout, command.Stderr = &stdout, &stderr
 		err := command.Run()
@@ -91,8 +92,105 @@ printf '%s' '{"text":"Voice memo transcript","segments":[{"start":0,"end":1,"tex
 	if err != nil || string(original) != "synthetic audio" {
 		t.Fatal("original audio changed")
 	}
+	for _, filename := range []string{"new.m4a", "notes.m4a", "latest.m4a", "list.m4a"} {
+		if err := os.WriteFile(filepath.Join(library, filename), []byte("synthetic audio"), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	sql = `INSERT INTO ZCLOUDRECORDING VALUES
+ ('TEAM MEETING', 'new.m4a', 800000005),
+ ('Team meeting notes', 'notes.m4a', 800000010),
+ ('Latest', 'latest.m4a', 800000003),
+ ('List', 'list.m4a', 800000004),
+ ('Not downloaded', 'missing.m4a', 800000099);`
+	if out, err := exec.Command("/usr/bin/sqlite3", db, sql).CombinedOutput(); err != nil {
+		t.Fatalf("additional fixtures: %s: %v", out, err)
+	}
+	for _, tt := range []struct {
+		args     []string
+		filename string
+	}{
+		{[]string{"vm", "LaTeSt"}, "notes.m4a"},
+		{[]string{"voice-memo", "latest"}, "notes.m4a"},
+		{[]string{"vm", "team meeting"}, "new.m4a"},
+		{[]string{"vm", "TEAM MEET"}, "notes.m4a"},
+		{[]string{"vm", "TMMT"}, "notes.m4a"},
+		{[]string{"vm", "--", "latest"}, "latest.m4a"},
+		{[]string{"vm", "--", "LIST"}, "list.m4a"},
+	} {
+		t.Run(strings.Join(tt.args, " "), func(t *testing.T) {
+			out, stderr, err := invoke(tt.args...)
+			if err != nil || strings.TrimSpace(out) != "Voice memo transcript" {
+				t.Fatalf("noninteractive selection: %q %s %v", out, stderr, err)
+			}
+			data, err := os.ReadFile(filepath.Join(home, "selected.log"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(strings.TrimSpace(string(data)), "\n")
+			if got := lines[len(lines)-1]; got != tt.filename {
+				t.Fatalf("selected %q, want %q", got, tt.filename)
+			}
+		})
+	}
+	t.Run("list", func(t *testing.T) {
+		before, err := os.ReadFile(filepath.Join(home, "selected.log"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		out, stderr, err := invoke("voice-memos", "LiSt")
+		if err != nil {
+			t.Fatalf("list: %s %v", stderr, err)
+		}
+		previous := -1
+		for _, filename := range []string{"notes.m4a", "new.m4a", "list.m4a", "latest.m4a", "internal-name.m4a"} {
+			position := strings.Index(out, filename)
+			if position <= previous {
+				t.Fatalf("list must show newest first: %s", out)
+			}
+			previous = position
+		}
+		if !strings.Contains(out, "Team meeting notes") {
+			t.Fatalf("missing display name: %s", out)
+		}
+		after, err := os.ReadFile(filepath.Join(home, "selected.log"))
+		if err != nil || !bytes.Equal(before, after) {
+			t.Fatal("listing ran transcription")
+		}
+	})
+	t.Run("latest output flags", func(t *testing.T) {
+		output := filepath.Join(home, "latest-output.json")
+		out, stderr, err := invoke("vm", "LATEST", "--quiet", "--format", "json", "--output", output)
+		if err != nil || out != "" {
+			t.Fatalf("latest flags: %q %s %v", out, stderr, err)
+		}
+		if data, err := os.ReadFile(output); err != nil || !strings.Contains(string(data), "Voice memo transcript") {
+			t.Fatalf("latest explicit output: %q %v", data, err)
+		}
+		if _, err := os.Stat(filepath.Join(recordings, "notes.json")); !os.IsNotExist(err) {
+			t.Fatal("explicit output must replace default destination")
+		}
+	})
 	_, stderr, err = invoke("vm", "absent")
 	if err == nil || !strings.Contains(stderr, "no downloaded Voice Memo matches") {
 		t.Fatalf("missing name: %s %v", stderr, err)
+	}
+	for _, filename := range []string{"internal-name.m4a", "new.m4a", "notes.m4a", "latest.m4a", "list.m4a"} {
+		path := filepath.Join(library, filename)
+		if data, err := os.ReadFile(path); err != nil || string(data) != "synthetic audio" {
+			t.Fatalf("library audio modified: %s", filename)
+		}
+		if _, err := os.Stat(strings.TrimSuffix(path, ".m4a") + ".txt"); !os.IsNotExist(err) {
+			t.Fatal("sidecar written into Voice Memos library")
+		}
+		if err := os.Remove(path); err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, keyword := range []string{"latest", "list"} {
+		_, stderr, err := invoke("vm", keyword)
+		if err == nil || !strings.Contains(stderr, "no downloaded Voice Memos found") {
+			t.Fatalf("empty library %s: %s %v", keyword, stderr, err)
+		}
 	}
 }

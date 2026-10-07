@@ -4,7 +4,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"text/tabwriter"
 
 	"github.com/joegoldin/audiomemo/internal/config"
 	"github.com/joegoldin/audiomemo/internal/transcribe"
@@ -14,14 +16,18 @@ import (
 )
 
 var transcribeVoiceMemoCmd = &cobra.Command{
-	Use:     "voice-memo [name]",
+	Use:     "voice-memo [name | latest | list]",
 	Aliases: []string{"vm", "voice-memos"},
 	Short:   "Transcribe a macOS Voice Memo by name or pick one interactively",
 	Long: `Transcribe a downloaded recording from the macOS Voice Memos library.
 
-Match a display name or filename (case-insensitive; unique substrings work).
-Without a name, or with multiple matches, open a searchable picker.
-Type to filter, Enter to select, or Esc to cancel.
+Match a display name or filename, case-insensitively: exact matches first,
+then substrings, then fuzzy matches (characters in order). Multiple matches
+select the newest recording in the best matching group.
+Use latest to transcribe the newest downloaded memo, or list to show all memos
+newest first without transcribing. Both keywords are case-insensitive.
+Use -- before a name to search for a literal name such as latest or list.
+Without a name, open a searchable picker. Enter selects; Esc cancels.
 
 All transcribe flags are supported. Transcripts are saved in the configured
 recordings directory (default: ~/Recordings), never in Apple's library.
@@ -29,6 +35,9 @@ Use --output to choose a different destination.
 
 Examples:
   transcribe vm
+  transcribe vm latest --backend nemo
+  transcribe vm list
+  transcribe vm -- latest
   transcribe vm "Team meeting" --backend nemo
   transcribe voice-memo meeting --format srt --output meeting.srt`,
 	RunE: runTranscribeVoiceMemo,
@@ -40,7 +49,25 @@ func runTranscribeVoiceMemo(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	query := strings.TrimSpace(strings.Join(args, " "))
-	if len(args) > 0 {
+	latest := false
+	if len(args) == 1 && cmd.ArgsLenAtDash() != 0 {
+		switch strings.ToLower(query) {
+		case "latest":
+			latest = true
+		case "list":
+			w := tabwriter.NewWriter(cmd.OutOrStdout(), 0, 4, 2, ' ', 0)
+			if _, err := fmt.Fprintln(w, "DATE\tNAME\tFILE"); err != nil {
+				return err
+			}
+			for _, recording := range recordings {
+				if _, err := fmt.Fprintf(w, "%s\t%s\t%s\n", recording.Date.Local().Format("2006-01-02 15:04:05 MST"), strconv.Quote(recording.Name), strconv.Quote(filepath.Base(recording.Path))); err != nil {
+					return err
+				}
+			}
+			return w.Flush()
+		}
+	}
+	if len(args) > 0 && !latest {
 		if query == "" {
 			return fmt.Errorf("Voice Memo name must not be empty")
 		}
@@ -50,15 +77,13 @@ func runTranscribeVoiceMemo(cmd *cobra.Command, args []string) error {
 		}
 	}
 	var selected *voicememo.Recording
-	if query != "" && len(recordings) == 1 {
+	if latest || query != "" {
+		// List is newest first, and Match preserves that order within each tier.
 		selected = &recordings[0]
 	} else {
 		target := resolveTUITarget()
 		defer target.Close()
 		if !target.Available {
-			if query != "" {
-				return fmt.Errorf("%d Voice Memos match %q; use an exact, unique name or filename, or run in a terminal to choose", len(recordings), query)
-			}
 			return fmt.Errorf("Voice Memo picker requires a terminal; pass a recording name or filename")
 		}
 		selected, err = tui.RunVoiceMemoPicker(recordings, target.Options()...)

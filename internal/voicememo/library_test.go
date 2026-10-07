@@ -16,7 +16,7 @@ func TestMatch(t *testing.T) {
 		count int
 		path  string
 	}{
-		{"MEETING", 1, "/library/one.m4a"}, {"meet", 2, ""}, {"two.m4a", 1, "/library/two.m4a"}, {"two", 1, "/library/two.m4a"}, {"absent", 0, ""}, {"", 3, ""},
+		{"MEETING", 1, "/library/one.m4a"}, {"meet", 2, ""}, {"two.m4a", 1, "/library/two.m4a"}, {"two", 1, "/library/two.m4a"}, {"absent", 0, ""}, {"", 3, ""}, {"MTNG", 2, ""}, {"to.ma", 1, "/library/two.m4a"},
 	} {
 		t.Run(tt.query, func(t *testing.T) {
 			got := Match(recordings, tt.query)
@@ -30,7 +30,34 @@ func TestMatch(t *testing.T) {
 	}
 	recordings = append(recordings, Recording{Name: "Meeting", Path: "/library/four.m4a"})
 	if got := Match(recordings, "Meeting"); len(got) != 2 {
-		t.Fatalf("duplicate names must remain ambiguous: %v", got)
+		t.Fatalf("duplicate exact names must remain available in input order: %v", got)
+	}
+}
+
+func TestMatchTiersAndUnicode(t *testing.T) {
+	recordings := []Recording{
+		{Name: "Équipe demain", Path: "/library/newest.m4a"},
+		{Name: "Équipe", Path: "/library/older.m4a"},
+		{Name: "Équipe demain", Path: "/library/oldest.m4a"},
+	}
+	for _, tt := range []struct {
+		query string
+		paths []string
+	}{
+		{"ÉQUIPE", []string{"/library/older.m4a"}},
+		{"Équipe d", []string{"/library/newest.m4a", "/library/oldest.m4a"}},
+		{"ÉQD", []string{"/library/newest.m4a", "/library/oldest.m4a"}},
+		{"DÉQ", nil},
+	} {
+		got := Match(recordings, tt.query)
+		if len(got) != len(tt.paths) {
+			t.Fatalf("%q: got %v", tt.query, got)
+		}
+		for i, path := range tt.paths {
+			if got[i].Path != path {
+				t.Errorf("%q: match %d = %s, want %s", tt.query, i, got[i].Path, path)
+			}
+		}
 	}
 }
 
