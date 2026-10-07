@@ -16,6 +16,7 @@
       system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
+        nemo-speech = pkgs.callPackage ./nix/nemo-speech.nix { };
         vendorHash = "sha256-++rCNa9MkMYY5RDkHijb5GFc1Y/zkGMo1UmzdQGpOT8=";
         whisperModel = pkgs.fetchurl {
           url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
@@ -40,6 +41,7 @@
                 pkgs.lib.makeBinPath [
                   pkgs.ffmpeg
                   pkgs.whisper-cpp
+                  nemo-speech
                 ]
               }
 
@@ -51,8 +53,11 @@
         };
       in
       {
-        packages.default = audiomemo;
-        packages.audiomemo = audiomemo;
+        packages = {
+          default = audiomemo;
+          inherit audiomemo nemo-speech;
+        };
+        checks.nemo-speech = nemo-speech;
 
         checks.default = pkgs.buildGoModule {
           pname = "audiomemo-tests";
@@ -62,12 +67,15 @@
           nativeBuildInputs = [
             pkgs.ffmpeg
             pkgs.whisper-cpp
+            nemo-speech
           ];
           doCheck = true;
+          AUDIOMEMO_NEMO_TEST_BINARY = "${nemo-speech}/bin/nemo-speech";
+          AUDIOMEMO_NEMO_TEST_DEVICE = "cpu";
           preCheck = ''
-            export HOME=/tmp/audiomemo-test-home
-            mkdir -p $HOME/.local/share/whisper-cpp
-            cp ${whisperModel} $HOME/.local/share/whisper-cpp/ggml-base.bin
+            export HOME="$TMPDIR/audiomemo-test-home"
+            mkdir -p "$HOME/.local/share/whisper-cpp"
+            cp ${whisperModel} "$HOME/.local/share/whisper-cpp/ggml-base.bin"
           '';
           installPhase = ''
             touch $out
@@ -76,6 +84,7 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = [
+            nemo-speech
             pkgs.go
             pkgs.gopls
             pkgs.ffmpeg

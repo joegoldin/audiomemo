@@ -449,8 +449,12 @@ func TestTranscribeWhisperAutoDetect(t *testing.T) {
 
 func TestTranscribeAutoDetectNoBackendFlag(t *testing.T) {
 	requireWhisperCPP(t)
-	// No --backend flag at all; should auto-detect
-	stdout, stderr, err := run(t, "transcribe", testAudio)
+	// Exercise the default backend without requiring a GPU in build sandboxes.
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	if err := os.WriteFile(configPath, []byte("[transcribe.nemo]\ndevice = \"cpu\"\n"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	stdout, stderr, err := run(t, "transcribe", "--config", configPath, testAudio)
 	if err != nil {
 		t.Fatalf("transcribe (auto) failed: %v\nstderr: %s", err, stderr)
 	}

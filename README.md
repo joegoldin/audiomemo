@@ -403,11 +403,27 @@ home.packages = [ pkgs.audiomemo ];
 
 Runtime: `ffmpeg` and **NeMo-Speech.cpp 0.2.0 or newer**, built with ASR,
 diarization, and HTTP/WebSocket support. Optional: `whisper-cpp` for the explicit
-Whisper backend. The Nix package supplies ffmpeg and whisper-cpp; install NeMo
-separately on PATH or set `transcribe.nemo.binary` to its absolute path.
+Whisper backend. The Nix package supplies ffmpeg, whisper-cpp, NeMo-Speech.cpp
+0.2.0, and the three default Q8 models for live ASR, final ASR, and diarization.
+It uses the pinned upstream Metal release on Apple Silicon, CPU on Intel macOS,
+and Vulkan (with CPU support) on x86_64 and ARM64 Linux. Linux GPU use requires
+working Vulkan drivers on the host.
+
+Nix downloads the models at build time (about 1.5 GB). The runtime wrapper seeds
+missing entries in NeMo's writable model cache with links to the Nix store;
+existing cached files and `NEMO_SPEECH_MODEL_DIR` are respected. The default
+models therefore need no first-recording download. Other model selections still
+use NeMo's normal downloader. Model licenses remain separate from the runtime.
+
+`nix build .#nemo-speech` builds the runtime and models separately; the normal
+`audiomemo` package includes them on its private PATH. Home Manager users should
+set `programs.audiomemo.settings.transcribe.default_backend = "auto"` for local
+first with configured ElevenLabs fallback, or `"nemo"` for local-only. An explicit
+`"elevenlabs"` setting still bypasses local inference.
 
 ### Local model setup (macOS / Linux)
 
+The following manual setup is only needed outside Nix.
 Use the [official NeMo-Speech.cpp installer](https://github.com/NVIDIA/NeMo-Speech.cpp/blob/main/docs/install.md).
 Inspect the installer before running it. Select **Metal** on Apple Silicon,
 **Vulkan** on Linux with an AMD GPU, or **CPU** on either platform. The upstream

@@ -147,7 +147,7 @@ func TestRunNemoFailureAndCancellation(t *testing.T) {
 	if _, err := runNemo(t.Context(), binary, []string{"transcribe"}, false); err == nil || !strings.Contains(err.Error(), "model-failed") {
 		t.Fatalf("error: %v", err)
 	}
-	os.WriteFile(binary, []byte("#!/bin/sh\nexec /bin/sleep 30\n"), 0755)
+	os.WriteFile(binary, []byte("#!/bin/sh\nexec sleep 30\n"), 0755)
 	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
 	defer cancel()
 	if _, err := runNemo(ctx, binary, []string{"transcribe"}, false); !errors.Is(err, context.DeadlineExceeded) {
