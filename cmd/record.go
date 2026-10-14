@@ -101,9 +101,7 @@ func init() {
 
 func ExecuteRecord() {
 	rootCmd.SetArgs(append([]string{"record"}, os.Args[1:]...))
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	execute()
 }
 
 // ExecuteRecordWhisper runs the recw shortcut: record without live
@@ -251,55 +249,12 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		channels = rChannels
 	}
 
-	var devices []string
-	var deviceLabel string
-
-	if !cmd.Flags().Changed("device") && !rNoTUI {
-		result, err := tui.RunRecordPicker(cfg, ui.Options()...)
-		if err != nil {
-			return err
-		}
-		if result.Skipped {
-			return nil
-		}
-		devices = result.Devices
-		deviceLabel = result.DeviceLabel
-	} else {
-		deviceName := cfg.Record.Device
-		if rDevice != "" {
-			deviceName = rDevice
-		}
-		if deviceName == "" {
-			deviceName = "default"
-		}
-
-		devices, err = cfg.ResolveDevice(deviceName)
-		if err != nil {
-			return fmt.Errorf("failed to resolve device %q: %w", deviceName, err)
-		}
-
-		deviceLabel = deviceName
-		if group, ok := cfg.DeviceGroups[deviceName]; ok && len(group) > 1 {
-			deviceLabel = fmt.Sprintf("%s (%s)", deviceName, strings.Join(group, " + "))
-		}
+	devices, deviceLabel, skipped, err := resolveRecordDevices(cmd, cfg, ui)
+	if err != nil {
+		return err
 	}
-
-	// Resolve pretty/description names to raw PulseAudio names, and
-	// fuzzy-substitute names that no longer exist verbatim (e.g. a PulseAudio
-	// profile rename like "HiFi__Line1__sink" -> "HiFi__Line__sink"). Applied
-	// for both the TUI-picker and explicit-device paths so a stale alias
-	// stored in config doesn't blow up ffmpeg.
-	if availDevices, listErr := record.ListDevices(); listErr == nil {
-		devices = record.ResolveDeviceNames(devices, availDevices)
-		for i, n := range devices {
-			if record.HasDevice(n, availDevices) {
-				continue
-			}
-			if matched, ok := record.FuzzyMatchDevice(n, availDevices); ok {
-				fmt.Fprintf(os.Stderr, "warning: device %q not found; auto-substituting %q (fuzzy match)\n", n, matched.Name)
-				devices[i] = matched.Name
-			}
-		}
+	if skipped {
+		return nil
 	}
 
 	// Positional args take priority, then -n flag. Multiple words joined with _.
@@ -492,6 +447,61 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// resolveRecordDevices picks the input devices: the interactive picker when
+// no -D was given and a TUI is available, else the flag or the configured
+// default. skipped reports that the user backed out of the picker.
+func resolveRecordDevices(cmd *cobra.Command, cfg *config.Config, ui tuiTarget) (devices []string, deviceLabel string, skipped bool, err error) {
+	if !cmd.Flags().Changed("device") && !rNoTUI {
+		result, err := tui.RunRecordPicker(cfg, ui.Options()...)
+		if err != nil {
+			return nil, "", false, err
+		}
+		if result.Skipped {
+			return nil, "", true, nil
+		}
+		devices = result.Devices
+		deviceLabel = result.DeviceLabel
+	} else {
+		deviceName := cfg.Record.Device
+		if rDevice != "" {
+			deviceName = rDevice
+		}
+		if deviceName == "" {
+			deviceName = "default"
+		}
+
+		devices, err = cfg.ResolveDevice(deviceName)
+		if err != nil {
+			return nil, "", false, fmt.Errorf("failed to resolve device %q: %w", deviceName, err)
+		}
+
+		deviceLabel = deviceName
+		if group, ok := cfg.DeviceGroups[deviceName]; ok && len(group) > 1 {
+			deviceLabel = fmt.Sprintf("%s (%s)", deviceName, strings.Join(group, " + "))
+		}
+	}
+
+	// Resolve pretty/description names to raw PulseAudio names, and
+	// fuzzy-substitute names that no longer exist verbatim (e.g. a PulseAudio
+	// profile rename like "HiFi__Line1__sink" -> "HiFi__Line__sink"). Applied
+	// for both the TUI-picker and explicit-device paths so a stale alias
+	// stored in config doesn't blow up ffmpeg.
+	if availDevices, listErr := record.ListDevices(); listErr == nil {
+		devices = record.ResolveDeviceNames(devices, availDevices)
+		for i, n := range devices {
+			if record.HasDevice(n, availDevices) {
+				continue
+			}
+			if matched, ok := record.FuzzyMatchDevice(n, availDevices); ok {
+				fmt.Fprintf(os.Stderr, "warning: device %q not found; auto-substituting %q (fuzzy match)\n", n, matched.Name)
+				devices[i] = matched.Name
+			}
+		}
+	}
+
+	return devices, deviceLabel, false, nil
 }
 
 func runClips(cfg *config.Config, name, format string, sampleRate, channels int, devices []string, deviceLabel, outputDir string, liveDisabled bool, stops stopConditions, ui tuiTarget) error {
@@ -717,7 +727,7 @@ func promoteLiveTranscript(audioPath string) (string, error) {
 		return "", nil
 	}
 	dest := transcriptPathFor(audioPath, transcribe.FormatText)
-	if err := os.WriteFile(dest, data, 0644); err != nil {
+	if err := os.WriteFile(dest, data, 0600); err != nil {
 		return "", err
 	}
 	return dest, nil

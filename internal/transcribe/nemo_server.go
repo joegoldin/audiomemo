@@ -27,6 +27,18 @@ func isolateCommand(cmd *exec.Cmd) {
 }
 
 func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, string, func(), error) {
+	base, key, cleanup, err := serveNemo(ctx, cfg, cfg.LiveModel, "local preview", "--asr.endpointing.enable=true")
+	if err != nil {
+		return "", "", nil, err
+	}
+	return "ws" + strings.TrimPrefix(base, "http") + "/v1/audio/transcriptions/realtime", key, cleanup, nil
+}
+
+// serveNemo starts a private nemo-speech server with the given ASR model and
+// waits until it is ready. It returns the server's http base URL and bearer
+// key. role names the server in errors, since a preview and a final pass can
+// fail at the same step for different reasons.
+func serveNemo(ctx context.Context, cfg config.NemoConfig, model, role string, extraArgs ...string) (string, string, func(), error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", "", nil, err
@@ -39,9 +51,9 @@ func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, string
 	}
 	key := hex.EncodeToString(keyBytes)
 	processCtx, cancel := context.WithCancel(ctx)
-	cmd := exec.CommandContext(processCtx, cfg.Binary, "serve", "--asr-model", cfg.LiveModel,
-		"--device", cfg.Device, "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--no-ui",
-		"--asr.endpointing.enable=true")
+	args := append([]string{"serve", "--asr-model", model,
+		"--device", cfg.Device, "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--no-ui"}, extraArgs...)
+	cmd := exec.CommandContext(processCtx, cfg.Binary, args...)
 	isolateCommand(cmd)
 	// The random bearer token prevents a port-allocation race from sending audio
 	// to another listener. Do not place it in process arguments or diagnostics.
@@ -55,7 +67,7 @@ func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, string
 	cmd.Stdout, cmd.Stderr = &logs, &logs
 	if err := cmd.Start(); err != nil {
 		cancel()
-		return "", "", nil, fmt.Errorf("start local preview: %w", err)
+		return "", "", nil, fmt.Errorf("start %s: %w", role, err)
 	}
 	done := make(chan struct{})
 	var exitErr error
@@ -77,10 +89,10 @@ func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, string
 		select {
 		case <-startup.Done():
 			cleanup()
-			return "", "", nil, fmt.Errorf("local preview startup: %w (pre-download models with nemo-speech pull %s)", startup.Err(), cfg.LiveModel)
+			return "", "", nil, fmt.Errorf("%s startup: %w (pre-download models with nemo-speech pull %s)", role, startup.Err(), model)
 		case <-done:
 			cleanup()
-			return "", "", nil, fmt.Errorf("local preview exited: %v: %s", exitErr, strings.ReplaceAll(strings.TrimSpace(logs.String()), key, "[redacted]"))
+			return "", "", nil, fmt.Errorf("%s exited: %v: %s", role, exitErr, strings.ReplaceAll(strings.TrimSpace(logs.String()), key, "[redacted]"))
 		case <-ticker.C:
 			req, err := http.NewRequestWithContext(startup, "GET", base+"/ready", nil)
 			if err != nil {
@@ -93,7 +105,7 @@ func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, string
 			}
 			response.Body.Close()
 			if response.StatusCode == http.StatusOK {
-				return "ws://127.0.0.1:" + strconv.Itoa(port) + "/v1/audio/transcriptions/realtime", key, cleanup, nil
+				return base, key, cleanup, nil
 			}
 		}
 	}

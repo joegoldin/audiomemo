@@ -1,7 +1,11 @@
 package cmd
 
 import (
+	"context"
 	"fmt"
+	"os"
+	"os/signal"
+	"syscall"
 	"time"
 
 	"github.com/joegoldin/audiomemo/internal/record"
@@ -83,6 +87,28 @@ func (s stopConditions) apply(opts record.RecordOpts) record.RecordOpts {
 	opts.MaxSilence = s.MaxSilence
 	opts.SilenceThreshold = s.Threshold
 	return opts
+}
+
+// waitHeadless blocks until a headless recording ends, either on its own or
+// because SIGINT or SIGTERM asked it to. A signal stops ffmpeg the way the
+// TUI's q does, so the run goes on to save the transcript and print what was
+// asked for instead of dying with all of that undone. A second signal gets
+// the default disposition and kills the process outright.
+//
+// ffmpeg often exits non-zero when stopped this way, so after a signal its
+// status is not reported as an error.
+func waitHeadless(rec *record.Recorder) (signalled bool, err error) {
+	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stopSignals()
+	select {
+	case err := <-rec.Done:
+		return false, err
+	case <-sigCtx.Done():
+		stopSignals()
+		rec.Stop()
+		rec.Wait()
+		return true, nil
+	}
 }
 
 // hint describes the stops for the headless status line.

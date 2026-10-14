@@ -14,6 +14,8 @@ func main() {
 		cmd.ExecuteRecord()
 	case "recw":
 		cmd.ExecuteRecordWhisper()
+	case "scribe":
+		cmd.ExecuteScribe()
 	case "transcribe":
 		cmd.ExecuteTranscribe()
 	default:

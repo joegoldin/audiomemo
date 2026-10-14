@@ -27,6 +27,7 @@
           version = "0.1.0";
           src = ./.;
           inherit vendorHash;
+          ldflags = [ "-X github.com/joegoldin/audiomemo/cmd.version=0.1.0" ];
           nativeBuildInputs = [
             pkgs.makeWrapper
             pkgs.installShellFiles
@@ -35,6 +36,7 @@
             ln -s $out/bin/audiomemo $out/bin/record
             ln -s $out/bin/audiomemo $out/bin/rect
             ln -s $out/bin/audiomemo $out/bin/recw
+            ln -s $out/bin/audiomemo $out/bin/scribe
             ln -s $out/bin/audiomemo $out/bin/transcribe
             wrapProgram $out/bin/audiomemo \
               --prefix PATH : ${

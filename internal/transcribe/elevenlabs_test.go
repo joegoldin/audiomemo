@@ -2,10 +2,12 @@ package transcribe
 
 import (
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -136,7 +138,7 @@ func TestElevenLabsRoundTrip(t *testing.T) {
 			"language_code":        "eng",
 			"language_probability": 0.99,
 			"text":                 "test transcript",
-			"words":               []any{},
+			"words":                []any{},
 		})
 	}))
 	defer server.Close()
@@ -173,8 +175,8 @@ func TestElevenLabsDeleteAfterTranscribe(t *testing.T) {
 			"language_code":        "eng",
 			"language_probability": 0.99,
 			"text":                 "test",
-			"words":               []any{},
-			"transcription_id":    tid,
+			"words":                []any{},
+			"transcription_id":     tid,
 		})
 	}))
 	defer server.Close()
@@ -281,3 +283,30 @@ func TestElevenLabsDeleteGivesUpAfter404s(t *testing.T) {
 }
 
 func ptr(f float64) *float64 { return &f }
+
+func TestElevenLabsTranscribeReader(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		f, hdr, err := r.FormFile("file")
+		if err != nil {
+			t.Fatalf("no file part: %v", err)
+		}
+		defer f.Close()
+		body, _ := io.ReadAll(f)
+		if hdr.Filename != "memo.ogg" || string(body) != "in-memory audio" {
+			t.Errorf("uploaded %q as %q, want the reader's bytes as memo.ogg", body, hdr.Filename)
+		}
+		json.NewEncoder(w).Encode(map[string]any{"text": "from memory", "words": []any{}})
+	}))
+	defer server.Close()
+
+	e := NewElevenLabs("test-key", "scribe_v2", false)
+	e.baseURL = server.URL
+
+	result, err := e.TranscribeReader(t.Context(), strings.NewReader("in-memory audio"), "memo.ogg", TranscribeOpts{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Text != "from memory" {
+		t.Errorf("expected 'from memory', got %q", result.Text)
+	}
+}

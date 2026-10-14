@@ -152,3 +152,17 @@ func TestModelQuitsWhenRecordingEndsOnItsOwn(t *testing.T) {
 		t.Errorf("command returned %T, want tea.QuitMsg", cmd())
 	}
 }
+
+func TestModelDisableBatchHidesRetranscribe(t *testing.T) {
+	m := NewModel(nil, testOpts())
+	m.DisableBatch()
+	m.SetOutLabel("/tmp/memo.txt (no audio kept)")
+	view := advance(m).View()
+
+	if strings.Contains(view, "[Q]") {
+		t.Errorf("with no audio kept the hint should not offer Q:\n%s", view)
+	}
+	if !strings.Contains(view, "out: /tmp/memo.txt (no audio kept)") {
+		t.Errorf("out line should show the label, not the audio path:\n%s", view)
+	}
+}

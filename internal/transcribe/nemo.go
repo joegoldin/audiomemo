@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"math"
+	"mime/multipart"
+	"net/http"
 	"os"
 	"os/exec"
 	"sort"
@@ -22,9 +24,12 @@ import (
 // do not accumulate. The live server is stopped before this final pass starts.
 type Nemo struct {
 	config config.NemoConfig
+
+	// Tests can substitute the server TranscribePCM loads its model into.
+	serve func(ctx context.Context, cfg config.NemoConfig, model, role string, extraArgs ...string) (string, string, func(), error)
 }
 
-func NewNemo(cfg config.NemoConfig) *Nemo { return &Nemo{config: cfg} }
+func NewNemo(cfg config.NemoConfig) *Nemo { return &Nemo{config: cfg, serve: serveNemo} }
 func (n *Nemo) Name() string              { return "nemo" }
 
 func (n *Nemo) Transcribe(ctx context.Context, audioPath string, opts TranscribeOpts) (*Result, error) {
@@ -136,6 +141,84 @@ func (n *Nemo) Transcribe(ctx context.Context, audioPath string, opts Transcribe
 	}
 	result.Segments = segmentWords(result.Words)
 	return result, nil
+}
+
+// TranscribePCM runs the final pass over 16-bit mono PCM held in memory.
+// Transcribe would convert its input into a WAV under a temp dir; this loads
+// the final model into a private server instead and uploads over loopback, so
+// the audio is never written to a file. Diarization is not offered: it runs
+// as a separate process that reads a file.
+func (n *Nemo) TranscribePCM(ctx context.Context, pcm []byte, sampleRate int, opts TranscribeOpts) (*Result, error) {
+	if err := validateOpts(n.Name(), opts, false, false, false, false, false); err != nil {
+		return nil, err
+	}
+	if _, err := exec.LookPath(n.config.Binary); err != nil {
+		return nil, fmt.Errorf("NeMo-Speech.cpp binary %q unavailable: %w (install nemo-speech with ASR and HTTP support)", n.config.Binary, err)
+	}
+	model := n.config.Model
+	if opts.Model != "" {
+		model = opts.Model
+	}
+	base, key, cleanup, err := n.serve(ctx, n.config, model, "local final pass")
+	if err != nil {
+		return nil, err
+	}
+	defer cleanup()
+
+	// Stream the form rather than assembling it, so an hour of audio is not
+	// held twice.
+	body, form := io.Pipe()
+	w := multipart.NewWriter(form)
+	go func() {
+		form.CloseWithError(func() error {
+			fw, err := w.CreateFormFile("file", "audio.wav")
+			if err != nil {
+				return err
+			}
+			if _, err := fw.Write(WAVHeader(len(pcm), sampleRate, 1)); err != nil {
+				return err
+			}
+			if _, err := fw.Write(pcm); err != nil {
+				return err
+			}
+			w.WriteField("response_format", "json")
+			if opts.Language != "" {
+				w.WriteField("language", opts.Language)
+			}
+			return w.Close()
+		}())
+	}()
+	req, err := http.NewRequestWithContext(ctx, "POST", base+"/v1/audio/transcriptions", body)
+	if err != nil {
+		body.Close()
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Content-Type", w.FormDataContentType())
+	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("local final pass: %w", err)
+	}
+	defer resp.Body.Close()
+	data, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("local final pass (%d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
+	}
+	var out struct {
+		Text *string `json:"text"`
+	}
+	if err := json.Unmarshal(data, &out); err != nil {
+		return nil, fmt.Errorf("decode NeMo ASR: %w", err)
+	}
+	if out.Text == nil {
+		return nil, fmt.Errorf("NeMo ASR output is missing text")
+	}
+	return &Result{Text: strings.TrimSpace(*out.Text)}, nil
 }
 
 // tailBuffer bounds subprocess diagnostics, including long model download logs.

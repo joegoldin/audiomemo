@@ -39,6 +39,17 @@ func NewElevenLabs(apiKey, defaultModel string, storeInCloud bool) *ElevenLabs {
 func (e *ElevenLabs) Name() string { return "elevenlabs" }
 
 func (e *ElevenLabs) Transcribe(ctx context.Context, audioPath string, opts TranscribeOpts) (*Result, error) {
+	f, err := os.Open(audioPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open audio file: %w", err)
+	}
+	defer f.Close()
+	return e.TranscribeReader(ctx, f, filepath.Base(audioPath), opts)
+}
+
+// TranscribeReader uploads audio held in memory, for a caller that must
+// never write the recording to a file. filename only labels the upload.
+func (e *ElevenLabs) TranscribeReader(ctx context.Context, audio io.Reader, filename string, opts TranscribeOpts) (*Result, error) {
 	if e.apiKey == "" {
 		return nil, fmt.Errorf("ElevenLabs API key not configured (set ELEVENLABS_API_KEY or config)")
 	}
@@ -47,7 +58,7 @@ func (e *ElevenLabs) Transcribe(ctx context.Context, audioPath string, opts Tran
 		return nil, err
 	}
 
-	body, contentType, err := e.buildMultipart(audioPath, opts)
+	body, contentType, err := e.buildMultipart(audio, filename, opts)
 	if err != nil {
 		return nil, err
 	}
@@ -88,13 +99,7 @@ func (e *ElevenLabs) Transcribe(ctx context.Context, audioPath string, opts Tran
 	return result, nil
 }
 
-func (e *ElevenLabs) buildMultipart(audioPath string, opts TranscribeOpts) (*bytes.Buffer, string, error) {
-	f, err := os.Open(audioPath)
-	if err != nil {
-		return nil, "", fmt.Errorf("failed to open audio file: %w", err)
-	}
-	defer f.Close()
-
+func (e *ElevenLabs) buildMultipart(audio io.Reader, filename string, opts TranscribeOpts) (*bytes.Buffer, string, error) {
 	var buf bytes.Buffer
 	w := multipart.NewWriter(&buf)
 
@@ -114,11 +119,11 @@ func (e *ElevenLabs) buildMultipart(audioPath string, opts TranscribeOpts) (*byt
 
 	w.WriteField("timestamps_granularity", "word")
 
-	fw, err := w.CreateFormFile("file", filepath.Base(audioPath))
+	fw, err := w.CreateFormFile("file", filename)
 	if err != nil {
 		return nil, "", err
 	}
-	if _, err := io.Copy(fw, f); err != nil {
+	if _, err := io.Copy(fw, audio); err != nil {
 		return nil, "", err
 	}
 
@@ -130,12 +135,12 @@ func (e *ElevenLabs) buildMultipart(audioPath string, opts TranscribeOpts) (*byt
 }
 
 type elevenlabsResponse struct {
-	LanguageCode        string             `json:"language_code"`
-	LanguageProbability float64            `json:"language_probability"`
-	Text                string             `json:"text"`
-	Words               []elevenlabsWord   `json:"words"`
-	TranscriptionID     *string            `json:"transcription_id"`
-	AudioDurationSecs   *float64           `json:"audio_duration_secs"`
+	LanguageCode        string           `json:"language_code"`
+	LanguageProbability float64          `json:"language_probability"`
+	Text                string           `json:"text"`
+	Words               []elevenlabsWord `json:"words"`
+	TranscriptionID     *string          `json:"transcription_id"`
+	AudioDurationSecs   *float64         `json:"audio_duration_secs"`
 }
 
 type elevenlabsWord struct {

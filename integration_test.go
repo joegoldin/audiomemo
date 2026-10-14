@@ -1099,3 +1099,56 @@ func TestRecordPipedStdoutOmitsThePath(t *testing.T) {
 		t.Errorf("the path belongs on stderr in headless mode, got %q", stderr)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// scribe
+// ---------------------------------------------------------------------------
+
+func TestBinaryDispatchScribe(t *testing.T) {
+	dir := t.TempDir()
+	symlink := filepath.Join(dir, "scribe")
+	if err := os.Symlink(testBinary, symlink); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(symlink, "--help")
+	var outBuf bytes.Buffer
+	cmd.Stdout = &outBuf
+	if err := cmd.Run(); err != nil {
+		t.Fatalf("symlink scribe --help failed: %v", err)
+	}
+	for _, want := range []string{"never write", "--no-record", "--cloud"} {
+		if !strings.Contains(outBuf.String(), want) {
+			t.Errorf("symlink 'scribe' help should mention %q", want)
+		}
+	}
+}
+
+func TestScribeRejectsTranscribeWithoutRecording(t *testing.T) {
+	configPath, _ := stubRecordConfig(t)
+	_, stderr, err := run(t, "scribe", "--config", configPath, "-r", "-t", "--no-tui")
+	if err == nil {
+		t.Fatal("-t with -r should fail")
+	}
+	if !strings.Contains(stderr, "--no-record") {
+		t.Errorf("stderr should explain the conflict, got %q", stderr)
+	}
+	if strings.Contains(stderr, "Usage:") {
+		t.Errorf("a runtime error should not dump usage, got %q", stderr)
+	}
+}
+
+// Without the local runtime scribe has nothing private to run on, and must
+// say so rather than quietly using the ElevenLabs key it can see.
+func TestScribeWithoutLocalRuntimeStaysOffline(t *testing.T) {
+	configPath, _ := stubRecordConfig(t)
+	t.Setenv("ELEVENLABS_API_KEY", "test-key")
+	t.Setenv("PATH", t.TempDir())
+	_, stderr, err := run(t, "scribe", "--config", configPath, "-D", "default", "--no-tui")
+	if err == nil {
+		t.Fatal("scribe with no nemo-speech and no --cloud should fail")
+	}
+	if !strings.Contains(stderr, "--cloud") || strings.Count(stderr, "unavailable") != 1 {
+		t.Errorf("stderr should report the missing runtime once and name --cloud, got %q", stderr)
+	}
+}

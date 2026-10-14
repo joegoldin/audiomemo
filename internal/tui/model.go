@@ -48,6 +48,8 @@ type Model struct {
 	streamWarning error
 	streamErr     error
 	streamNote    string // e.g. "live transcription unavailable: ..."
+	outLabel      string // replaces OutputPath on the out: line when set
+	noBatch       bool   // no audio is kept, so Q has nothing to retranscribe
 }
 
 // ShouldTranscribe returns true if the user pressed Q to quit-and-transcribe.
@@ -126,6 +128,18 @@ func NewClipsModel(startFunc StartFunc, rec *record.Recorder, streamer *transcri
 // e.g. "live transcription unavailable: no ElevenLabs API key configured".
 func (m *Model) SetStreamNote(note string) {
 	m.streamNote = note
+}
+
+// SetOutLabel replaces the out: line's file path, for a run whose audio has
+// no path because it never reaches the disk.
+func (m *Model) SetOutLabel(label string) {
+	m.outLabel = label
+}
+
+// DisableBatch is for a run that keeps no audio: Q then behaves as q, and the
+// key hint stops offering a retranscription that cannot happen.
+func (m *Model) DisableBatch() {
+	m.noBatch = true
 }
 
 func (m *Model) Init() tea.Cmd {
@@ -303,7 +317,7 @@ func (m *Model) handleKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.recorder.Stop()
 		m.state = StateSaved
-		m.transcribe = true
+		m.transcribe = !m.noBatch
 		return m, tea.Quit
 
 	case key.Matches(msg, key.NewBinding(key.WithKeys("m", " "))):
@@ -383,7 +397,11 @@ func (m *Model) View() string {
 		micDisplay = m.opts.DeviceLabel
 	}
 	micLine := infoStyle.Render(fmt.Sprintf("  mic: %s", micDisplay))
-	outLine := infoStyle.Render(fmt.Sprintf("  out: %s", m.opts.OutputPath))
+	out := m.opts.OutputPath
+	if m.outLabel != "" {
+		out = m.outLabel
+	}
+	outLine := infoStyle.Render(fmt.Sprintf("  out: %s", out))
 
 	// Saved message (clips mode, between clips)
 	var savedLine string
@@ -399,6 +417,8 @@ func (m *Model) View() string {
 		} else {
 			keys = dimStyle.Render("  [↑↓] scroll  [m]ute  [q] save clip  [Q]uit+transcribe")
 		}
+	} else if m.noBatch {
+		keys = dimStyle.Render("  [↑↓] scroll  [m]ute  [q]uit")
 	} else {
 		keys = dimStyle.Render("  [↑↓] scroll  [m]ute  [q]uit  [Q]uit+transcribe")
 	}

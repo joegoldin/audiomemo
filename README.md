@@ -19,6 +19,7 @@ audiomemo - record audio and transcribe it
     record [flags]
     rect [flags]
     recw [flags]
+    scribe [flags]
     transcribe [flags] <file>
 
 ## DESCRIPTION
@@ -28,7 +29,7 @@ transcribing locally with NeMo-Speech.cpp, with ElevenLabs fallback when configu
 Whisper, Deepgram, OpenAI, and Mistral remain available as explicit backends.
 
 The binary dispatches on `argv[0]`: symlinks named `record`, `rect`, `recw`,
-or `transcribe` invoke those commands directly.
+`scribe`, or `transcribe` invoke those commands directly.
 
 ## COMMANDS
 
@@ -83,6 +84,39 @@ Record without live transcription, then batch-transcribe entirely locally.
 binary when whisper.cpp is unavailable, and fails rather than using a cloud
 backend when neither local binary is installed. It accepts the same recording
 flags and positional name as `record`.
+
+### scribe
+
+Private live transcription: the local NeMo models only, and no audio written
+to disk. The transcript is the only file saved, at `<name>-<timestamp>.txt`
+in the output directory (the live preview stays at `-live.txt`, as with
+`record`).
+
+By default the 16 kHz audio the preview hears is also held in memory (about
+115 MB an hour), so `Q` or `-t` can replace the live transcript with a
+**Parakeet TDT v3** final pass when you stop. That pass runs in a private
+loopback `nemo-speech serve` and receives the audio as an upload from memory,
+so unlike `transcribe` it never converts the recording to a temp file. It does
+not diarize, because NeMo diarization reads a file. With `-r` no audio is kept,
+not even in memory, and `Q` behaves like `q`.
+
+Nothing leaves the machine unless `--cloud` is passed. With `--cloud` and an
+ElevenLabs key, ElevenLabs takes over when the local live preview or final
+pass fails, and the audio is uploaded.
+
+    -r, --no-record              keep no audio, not even in memory
+        --cloud                  allow ElevenLabs fallback (uploads audio)
+    -t, --transcribe             always run the final pass on exit
+    -D, --device string          input device name, alias, or group
+    -n, --name string            label for the transcript filename
+    -d, --max-duration string    stop after this long
+        --max-silence string     stop after this much silence
+        --silence-threshold f    dBFS counted as silence (default -40)
+        --print string           auto, path, text, both, none (default auto);
+                                 path is the transcript's path
+        --no-tui                 headless mode
+    -v, --verbose                verbose output
+        --config string          config file path
 
 ### transcribe
 

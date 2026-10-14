@@ -25,6 +25,7 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(recordCmd)
+	rootCmd.AddCommand(scribeCmd)
 	rootCmd.AddCommand(transcribeCmd)
 	rootCmd.AddCommand(deviceCmd)
 }
