@@ -16,7 +16,7 @@ import (
 type onboardState int
 
 const (
-	OBLoading     onboardState = iota
+	OBLoading onboardState = iota
 	OBPickDevice
 	OBAliasPrompt
 	OBDone

@@ -270,15 +270,21 @@ func (c *Config) Save() error {
 // SaveTo writes the config to the specified path, creating parent directories
 // as needed.
 func (c *Config) SaveTo(path string) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	// The config holds API keys, so neither it nor its directory is readable
+	// by anyone else. WriteFile's mode only applies on creation, hence the
+	// Chmod for a config written before this was tightened.
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("creating config directory: %w", err)
 	}
 	data, err := toml.Marshal(c)
 	if err != nil {
 		return fmt.Errorf("encoding config: %w", err)
 	}
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return fmt.Errorf("writing config: %w", err)
+	}
+	if err := os.Chmod(path, 0600); err != nil {
+		return fmt.Errorf("restricting config permissions: %w", err)
 	}
 	return nil
 }

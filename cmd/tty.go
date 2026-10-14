@@ -5,7 +5,9 @@ import (
 	"os"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/mattn/go-isatty"
+	"github.com/muesli/termenv"
 )
 
 // ttyChoice is where an interactive TUI renders. Bubbletea defaults to stdout,
@@ -76,12 +78,14 @@ func resolveTUITarget() tuiTarget {
 	case ttyStdout:
 		return tuiTarget{Available: true}
 	case ttyDevTTY:
+		useColorsOf(tty)
 		return tuiTarget{
 			Available: true,
 			options:   []tea.ProgramOption{tea.WithOutput(tty), tea.WithInput(tty)},
 			tty:       tty,
 		}
 	case ttyStderr:
+		useColorsOf(os.Stderr)
 		return tuiTarget{
 			Available: true,
 			Note:      "stdout is not a terminal: drawing the interface on stderr",
@@ -93,6 +97,13 @@ func resolveTUITarget() tuiTarget {
 		}
 		return tuiTarget{Note: "no terminal available: recording headless"}
 	}
+}
+
+// useColorsOf points lipgloss's colour detection at the file the TUI draws on.
+// It otherwise inspects stdout, which in exactly these cases is a pipe, and
+// renders the whole interface without colour.
+func useColorsOf(f *os.File) {
+	lipgloss.DefaultRenderer().SetOutput(termenv.NewOutput(f))
 }
 
 // warnTUITarget prints the target's note, if it has one. Notes go to stderr so

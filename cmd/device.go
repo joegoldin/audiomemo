@@ -2,6 +2,9 @@ package cmd
 
 import (
 	"fmt"
+	"maps"
+	"os"
+	"slices"
 	"strings"
 
 	"github.com/joegoldin/audiomemo/internal/config"
@@ -137,8 +140,9 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 	if len(cfg.Devices) > 0 {
 		fmt.Println()
 		fmt.Println("ALIASES")
-		for alias, raw := range cfg.Devices {
-			fmt.Printf("  %s -> %s\n", alias, raw)
+		// Sorted so the listing is stable enough to diff or grep.
+		for _, alias := range slices.Sorted(maps.Keys(cfg.Devices)) {
+			fmt.Printf("  %s -> %s\n", alias, cfg.Devices[alias])
 		}
 	}
 
@@ -146,8 +150,8 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 	if len(cfg.DeviceGroups) > 0 {
 		fmt.Println()
 		fmt.Println("GROUPS")
-		for name, aliases := range cfg.DeviceGroups {
-			fmt.Printf("  %s -> %s\n", name, strings.Join(aliases, ", "))
+		for _, name := range slices.Sorted(maps.Keys(cfg.DeviceGroups)) {
+			fmt.Printf("  %s -> %s\n", name, strings.Join(cfg.DeviceGroups[name], ", "))
 		}
 	}
 
@@ -188,7 +192,7 @@ func runDeviceAlias(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("Alias created: %s -> %s\n", name, deviceName)
+	fmt.Fprintf(os.Stderr, "Alias created: %s -> %s\n", name, deviceName)
 	return nil
 }
 
@@ -227,7 +231,7 @@ func runDeviceGroup(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("Group created: %s -> %s\n", name, strings.Join(aliases, ", "))
+	fmt.Fprintf(os.Stderr, "Group created: %s -> %s\n", name, strings.Join(aliases, ", "))
 	return nil
 }
 
@@ -245,6 +249,6 @@ func runDeviceDefault(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to save config: %w", err)
 	}
 
-	fmt.Printf("Default device set: %s\n", name)
+	fmt.Fprintf(os.Stderr, "Default device set: %s\n", name)
 	return nil
 }

@@ -126,10 +126,9 @@ func runRecordStream(
 		go func() { defer pumps.Done(); pumpErrors(em, streamer.Warning) }()
 	}
 
-	// --no-tui has no signal handler today: Ctrl+C kills the process and
-	// ffmpeg finalises the file on its own. A consumer needs more than that,
-	// so --stream stops ffmpeg the same graceful way the TUI's `q` does and
-	// then closes the stream deliberately.
+	// Like --no-tui, --stream stops ffmpeg the same graceful way the TUI's
+	// `q` does. It also has to know it was signalled while the recording is
+	// still running, so it can close the stream deliberately.
 	sigCtx, stopSignals := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stopSignals()
 

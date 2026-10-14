@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/joegoldin/audiomemo/internal/config"
@@ -73,9 +74,7 @@ func init() {
 
 func ExecuteTranscribe() {
 	rootCmd.SetArgs(append([]string{"transcribe"}, os.Args[1:]...))
-	if err := rootCmd.Execute(); err != nil {
-		os.Exit(1)
-	}
+	execute()
 }
 
 func runTranscribe(cmd *cobra.Command, args []string) error {
@@ -83,7 +82,7 @@ func runTranscribe(cmd *cobra.Command, args []string) error {
 }
 
 func runTranscribeFile(cmd *cobra.Command, audioPath, savePath string) error {
-	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(cmd.Context(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 
 	var cfg *config.Config
@@ -106,7 +105,9 @@ func runTranscribeFile(cmd *cobra.Command, audioPath, savePath string) error {
 		}
 		defer os.Remove(tmp)
 		audioPath = tmp
-		savePath = transcriptPathFor(tmp, transcribe.ParseFormat(tFormat))
+		// Audio from stdin has no home of its own: a transcript saved beside
+		// the temp buffer would be left behind in TMPDIR once it is removed.
+		savePath = ""
 	}
 
 	// Apply --store-in-cloud override before creating backend.
@@ -218,16 +219,16 @@ func runTranscribeFile(cmd *cobra.Command, audioPath, savePath string) error {
 
 	// An explicit destination replaces auto-save; comparison runs must not
 	// overwrite an existing transcript beside the original recording.
-	if savePath != "" && tOutput == "" {
+	if savePath != "" && (tOutput == "" || tOutput == "-") {
 		transcriptPath := savePath
-		if err := os.WriteFile(transcriptPath, []byte(output), 0644); err != nil {
+		if err := os.WriteFile(transcriptPath, []byte(output), 0600); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: failed to save transcript to %s: %v\n", transcriptPath, err)
 		} else if tVerbose {
 			fmt.Fprintf(os.Stderr, "Saved transcript to %s\n", transcriptPath)
 		}
 	}
 
-	if tOutput != "" {
+	if tOutput != "" && tOutput != "-" {
 		if err := os.WriteFile(tOutput, []byte(output), 0644); err != nil {
 			return err
 		}
