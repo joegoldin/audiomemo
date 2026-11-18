@@ -24,6 +24,7 @@
         };
         toolPath = pkgs.lib.makeBinPath [
           pkgs.ffmpeg
+          pkgs.lsof
           pkgs.whisper-cpp
           nemo-speech
         ];
@@ -116,6 +117,7 @@
           checkFlags = testFlags;
           nativeBuildInputs = [
             pkgs.ffmpeg
+            pkgs.lsof
             pkgs.whisper-cpp
             nemo-speech
           ];
@@ -138,6 +140,7 @@
             pkgs.go
             pkgs.gopls
             pkgs.ffmpeg
+            pkgs.lsof
             pkgs.whisper-cpp
           ];
         };

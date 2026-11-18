@@ -75,8 +75,8 @@ func TestLocalLiveProtocol(t *testing.T) {
 		t.Fatal(err)
 	}
 	var cleaned atomic.Bool
-	s.startLocal = func(context.Context, config.NemoConfig) (string, string, func(), error) {
-		return "ws://" + server.Listener.Addr().String() + "/v1/audio/transcriptions/realtime", "test-local-token", func() { cleaned.Store(true) }, nil
+	s.startLocal = func(context.Context, config.NemoConfig) (string, nemoAuth, func(), error) {
+		return "ws://" + server.Listener.Addr().String() + "/v1/audio/transcriptions/realtime", nemoAuth{key: "test-local-token"}, func() { cleaned.Store(true) }, nil
 	}
 	file := filepath.Join(t.TempDir(), "preview.txt")
 	if err := s.Start(t.Context(), strings.NewReader("pcm-data"), file); err != nil {
@@ -147,11 +147,11 @@ func TestLiveLocalFailureFallsBackToCloud(t *testing.T) {
 			cfg.Transcribe.ElevenLabs.APIKey = "test"
 			s, _ := NewLiveStreamer(cfg, "")
 			s.baseURL = "ws://" + cloud.Listener.Addr().String()
-			s.startLocal = func(context.Context, config.NemoConfig) (string, string, func(), error) {
+			s.startLocal = func(context.Context, config.NemoConfig) (string, nemoAuth, func(), error) {
 				if !midstream {
-					return "", "", nil, errors.New("missing model")
+					return "", nemoAuth{}, nil, errors.New("missing model")
 				}
-				return "ws://" + local.Listener.Addr().String(), "key", func() {}, nil
+				return "ws://" + local.Listener.Addr().String(), nemoAuth{key: "key"}, func() {}, nil
 			}
 			if err := s.Start(t.Context(), strings.NewReader("pcm-data"), filepath.Join(t.TempDir(), "preview")); err != nil {
 				t.Fatal(err)
@@ -178,8 +178,8 @@ func TestLiveStrictLocalAndNoKeyNeverFallback(t *testing.T) {
 		}
 		s, _ := NewLiveStreamer(cfg, backend)
 		s.baseURL = "ws://127.0.0.1:1"
-		s.startLocal = func(context.Context, config.NemoConfig) (string, string, func(), error) {
-			return "", "", nil, errors.New("unavailable")
+		s.startLocal = func(context.Context, config.NemoConfig) (string, nemoAuth, func(), error) {
+			return "", nemoAuth{}, nil, errors.New("unavailable")
 		}
 		pr, pw := io.Pipe()
 		if err := s.Start(t.Context(), pr, filepath.Join(t.TempDir(), "preview")); err != nil {
@@ -223,10 +223,10 @@ func TestLiveBackendSelection(t *testing.T) {
 func TestManagedLiveStopCancelsStartup(t *testing.T) {
 	s, _ := NewLiveStreamer(config.Default(), "")
 	stopped := make(chan struct{})
-	s.startLocal = func(ctx context.Context, cfg config.NemoConfig) (string, string, func(), error) {
+	s.startLocal = func(ctx context.Context, cfg config.NemoConfig) (string, nemoAuth, func(), error) {
 		<-ctx.Done()
 		close(stopped)
-		return "", "", nil, ctx.Err()
+		return "", nemoAuth{}, nil, ctx.Err()
 	}
 	pr, pw := io.Pipe()
 	defer pw.Close()

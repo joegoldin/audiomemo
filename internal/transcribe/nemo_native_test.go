@@ -71,3 +71,30 @@ func TestNemoNative(t *testing.T) {
 		t.Logf("Native live preview: %d characters", len(s.FullText()))
 	})
 }
+
+// A successful final is a second independently verified connection (after the
+// readiness request). Exercise it on the same non-private fixture as preview.
+func TestNativePrivatePCMFinal(t *testing.T) {
+	binary := os.Getenv("AUDIOMEMO_NEMO_TEST_BINARY")
+	if binary == "" {
+		t.Skip("native inference not requested")
+	}
+	cfg := config.Default().Transcribe.Nemo
+	cfg.Binary = binary
+	if device := os.Getenv("AUDIOMEMO_NEMO_TEST_DEVICE"); device != "" {
+		cfg.Device = device
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), 2*time.Minute)
+	defer cancel()
+	pcm, e := exec.CommandContext(ctx, "ffmpeg", "-v", "error", "-i", filepath.Join("..", "..", "testdata", "test.ogg"), "-f", "s16le", "-ar", "16000", "-ac", "1", "pipe:1").Output()
+	if e != nil {
+		t.Fatal(e)
+	}
+	res, e := NewNemo(cfg).TranscribePCM(ctx, pcm, 16000, TranscribeOpts{})
+	if e != nil {
+		t.Fatal(e)
+	}
+	if strings.TrimSpace(res.Text) == "" {
+		t.Fatal("empty local result")
+	}
+}

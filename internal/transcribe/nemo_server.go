@@ -26,10 +26,10 @@ func isolateCommand(cmd *exec.Cmd) {
 	cmd.WaitDelay = 2 * time.Second
 }
 
-func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, string, func(), error) {
+func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, nemoAuth, func(), error) {
 	base, key, cleanup, err := serveNemo(ctx, cfg, cfg.LiveModel, "local preview", "--asr.endpointing.enable=true")
 	if err != nil {
-		return "", "", nil, err
+		return "", nemoAuth{}, nil, err
 	}
 	return "ws" + strings.TrimPrefix(base, "http") + "/v1/audio/transcriptions/realtime", key, cleanup, nil
 }
@@ -38,16 +38,16 @@ func startNemoServer(ctx context.Context, cfg config.NemoConfig) (string, string
 // waits until it is ready. It returns the server's http base URL and bearer
 // key. role names the server in errors, since a preview and a final pass can
 // fail at the same step for different reasons.
-func serveNemo(ctx context.Context, cfg config.NemoConfig, model, role string, extraArgs ...string) (string, string, func(), error) {
+func serveNemo(ctx context.Context, cfg config.NemoConfig, model, role string, extraArgs ...string) (string, nemoAuth, func(), error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
-		return "", "", nil, err
+		return "", nemoAuth{}, nil, err
 	}
 	port := listener.Addr().(*net.TCPAddr).Port
 	listener.Close()
 	keyBytes := make([]byte, 32)
 	if _, err := rand.Read(keyBytes); err != nil {
-		return "", "", nil, err
+		return "", nemoAuth{}, nil, err
 	}
 	key := hex.EncodeToString(keyBytes)
 	processCtx, cancel := context.WithCancel(ctx)
@@ -55,19 +55,17 @@ func serveNemo(ctx context.Context, cfg config.NemoConfig, model, role string, e
 		"--device", cfg.Device, "--host", "127.0.0.1", "--port", strconv.Itoa(port), "--no-ui"}, extraArgs...)
 	cmd := exec.CommandContext(processCtx, cfg.Binary, args...)
 	isolateCommand(cmd)
-	// The random bearer token prevents a port-allocation race from sending audio
-	// to another listener. Do not place it in process arguments or diagnostics.
+	// Socket ownership authenticates the server; the bearer authenticates the client.
 	for _, env := range os.Environ() {
 		if !strings.HasPrefix(env, "NEMO_SPEECH_HTTP_API_KEY=") {
 			cmd.Env = append(cmd.Env, env)
 		}
 	}
 	cmd.Env = append(cmd.Env, "NEMO_SPEECH_HTTP_API_KEY="+key)
-	var logs tailBuffer
-	cmd.Stdout, cmd.Stderr = &logs, &logs
+
 	if err := cmd.Start(); err != nil {
 		cancel()
-		return "", "", nil, fmt.Errorf("start %s: %w", role, err)
+		return "", nemoAuth{}, nil, fmt.Errorf("start %s: %w", role, err)
 	}
 	done := make(chan struct{})
 	var exitErr error
@@ -80,8 +78,11 @@ func serveNemo(ctx context.Context, cfg config.NemoConfig, model, role string, e
 	}
 	startup, stop := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer stop()
-	base := "http://127.0.0.1:" + strconv.Itoa(port)
-	client := &http.Client{Timeout: time.Second, Transport: &http.Transport{Proxy: nil}}
+	addr := "127.0.0.1:" + strconv.Itoa(port)
+	base := "http://" + addr
+	auth := nemoAuth{key: key, dial: childDial(cmd.Process.Pid, addr, done)}
+	client := auth.client()
+	client.Timeout = 4 * time.Second
 	defer client.CloseIdleConnections()
 	ticker := time.NewTicker(100 * time.Millisecond)
 	defer ticker.Stop()
@@ -89,15 +90,15 @@ func serveNemo(ctx context.Context, cfg config.NemoConfig, model, role string, e
 		select {
 		case <-startup.Done():
 			cleanup()
-			return "", "", nil, fmt.Errorf("%s startup: %w (pre-download models with nemo-speech pull %s)", role, startup.Err(), model)
+			return "", nemoAuth{}, nil, fmt.Errorf("%s startup: %w (pre-download models with nemo-speech pull %s)", role, startup.Err(), model)
 		case <-done:
 			cleanup()
-			return "", "", nil, fmt.Errorf("%s exited: %v: %s", role, exitErr, strings.ReplaceAll(strings.TrimSpace(logs.String()), key, "[redacted]"))
+			return "", nemoAuth{}, nil, fmt.Errorf("%s exited: %v", role, exitErr)
 		case <-ticker.C:
 			req, err := http.NewRequestWithContext(startup, "GET", base+"/ready", nil)
 			if err != nil {
 				cleanup()
-				return "", "", nil, err
+				return "", nemoAuth{}, nil, err
 			}
 			response, err := client.Do(req)
 			if err != nil {
@@ -105,7 +106,7 @@ func serveNemo(ctx context.Context, cfg config.NemoConfig, model, role string, e
 			}
 			response.Body.Close()
 			if response.StatusCode == http.StatusOK {
-				return base, key, cleanup, nil
+				return base, auth, cleanup, nil
 			}
 		}
 	}

@@ -26,7 +26,7 @@ type Nemo struct {
 	config config.NemoConfig
 
 	// Tests can substitute the server TranscribePCM loads its model into.
-	serve func(ctx context.Context, cfg config.NemoConfig, model, role string, extraArgs ...string) (string, string, func(), error)
+	serve func(ctx context.Context, cfg config.NemoConfig, model, role string, extraArgs ...string) (string, nemoAuth, func(), error)
 }
 
 func NewNemo(cfg config.NemoConfig) *Nemo { return &Nemo{config: cfg, serve: serveNemo} }
@@ -159,7 +159,7 @@ func (n *Nemo) TranscribePCM(ctx context.Context, pcm []byte, sampleRate int, op
 	if opts.Model != "" {
 		model = opts.Model
 	}
-	base, key, cleanup, err := n.serve(ctx, n.config, model, "local final pass")
+	base, auth, cleanup, err := n.serve(ctx, n.config, model, "local final pass")
 	if err != nil {
 		return nil, err
 	}
@@ -193,22 +193,23 @@ func (n *Nemo) TranscribePCM(ctx context.Context, pcm []byte, sampleRate int, op
 		body.Close()
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+key)
+	req.Header.Set("Authorization", "Bearer "+auth.key)
 	req.Header.Set("Content-Type", w.FormDataContentType())
-	client := &http.Client{Transport: &http.Transport{Proxy: nil}}
+	client := auth.client()
 	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("local final pass: %w", err)
 	}
 	defer resp.Body.Close()
-	data, err := io.ReadAll(resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("local final pass: HTTP %d", resp.StatusCode)
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, 4<<20))
 	if err != nil {
 		return nil, err
 	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("local final pass (%d): %s", resp.StatusCode, strings.TrimSpace(string(data)))
-	}
+
 	var out struct {
 		Text *string `json:"text"`
 	}

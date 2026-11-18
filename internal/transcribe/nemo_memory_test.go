@@ -60,9 +60,9 @@ func TestNemoTranscribePCMUploadsFromMemory(t *testing.T) {
 
 	var servedModel string
 	n := NewNemo(config.NemoConfig{Binary: "sh", Model: "parakeet-tdt", LiveModel: "nemotron-en"})
-	n.serve = func(_ context.Context, _ config.NemoConfig, model, _ string, _ ...string) (string, string, func(), error) {
+	n.serve = func(_ context.Context, _ config.NemoConfig, model, _ string, _ ...string) (string, nemoAuth, func(), error) {
 		servedModel = model
-		return server.URL, "secret", func() {}, nil
+		return server.URL, nemoAuth{key: "secret"}, func() {}, nil
 	}
 	result, err := n.TranscribePCM(t.Context(), pcm, 16000, TranscribeOpts{})
 	if err != nil {
@@ -78,12 +78,36 @@ func TestNemoTranscribePCMUploadsFromMemory(t *testing.T) {
 
 func TestNemoTranscribePCMRefusesDiarize(t *testing.T) {
 	n := NewNemo(config.NemoConfig{Binary: "sh"})
-	n.serve = func(context.Context, config.NemoConfig, string, string, ...string) (string, string, func(), error) {
+	n.serve = func(context.Context, config.NemoConfig, string, string, ...string) (string, nemoAuth, func(), error) {
 		t.Fatal("must not start a server for an unsupported request")
-		return "", "", nil, nil
+		return "", nemoAuth{}, nil, nil
 	}
 	_, err := n.TranscribePCM(t.Context(), []byte{0, 0}, 16000, TranscribeOpts{Diarize: true})
 	if err == nil || !strings.Contains(err.Error(), "diarize") {
 		t.Errorf("err = %v, want a diarize refusal", err)
+	}
+}
+
+func TestFinalHTTPFailureIsPrivateAndDoesNotRedirect(t *testing.T) {
+	for _, status := range []int{http.StatusFound, http.StatusBadRequest} {
+		t.Run(http.StatusText(status), func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/v1/audio/transcriptions" {
+					t.Error("followed redirect")
+				}
+				w.Header().Set("Location", "/unexpected")
+				w.WriteHeader(status)
+				io.WriteString(w, "private transcript")
+			}))
+			defer srv.Close()
+			n := NewNemo(config.NemoConfig{Binary: "sh"})
+			n.serve = func(context.Context, config.NemoConfig, string, string, ...string) (string, nemoAuth, func(), error) {
+				return srv.URL, nemoAuth{}, func() {}, nil
+			}
+			_, err := n.TranscribePCM(t.Context(), []byte{1, 2}, 16000, TranscribeOpts{})
+			if err == nil || strings.Contains(err.Error(), "private transcript") {
+				t.Fatal("missing or unredacted HTTP failure")
+			}
+		})
 	}
 }

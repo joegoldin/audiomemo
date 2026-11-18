@@ -55,7 +55,7 @@ type Streamer struct {
 	once      sync.Once
 
 	// Tests can substitute the managed process without loading models.
-	startLocal func(context.Context, config.NemoConfig) (string, string, func(), error)
+	startLocal func(context.Context, config.NemoConfig) (string, nemoAuth, func(), error)
 }
 
 func NewStreamer(apiKey string, storeInCloud bool) *Streamer {
@@ -206,10 +206,10 @@ func (s *Streamer) pump(ctx context.Context, reader io.Reader, packets chan []by
 
 func (s *Streamer) run(ctx context.Context, packets <-chan []byte) error {
 	if s.local != nil {
-		endpoint, key, cleanup, err := s.startLocal(ctx, *s.local)
+		endpoint, auth, cleanup, err := s.startLocal(ctx, *s.local)
 		if err == nil {
-			headers := http.Header{"Authorization": []string{"Bearer " + key}}
-			dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second}
+			headers := http.Header{"Authorization": []string{"Bearer " + auth.key}}
+			dialer := websocket.Dialer{HandshakeTimeout: 10 * time.Second, NetDialContext: auth.dial}
 			conn, response, dialErr := dialer.DialContext(ctx, endpoint, headers)
 			if response != nil {
 				response.Body.Close()
