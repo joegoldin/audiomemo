@@ -290,3 +290,27 @@ func TestRetryDeduplicatesAndReservesCapacityForCapture(t *testing.T) {
 		t.Fatal(r)
 	}
 }
+
+type inFlightDesktop struct {
+	fakeDesktop
+	entered, release chan struct{}
+}
+
+func (d inFlightDesktop) Deliver(context.Context, string, string, bool) error {
+	close(d.entered)
+	<-d.release
+	return nil
+}
+func TestCannotCancelAfterDesktopHandoff(t *testing.T) {
+	d := inFlightDesktop{entered: make(chan struct{}), release: make(chan struct{})}
+	c := newTestController(t, Options{Desktop: d, StartQuick: func(context.Context, string, string, func(st.Preview), func(string)) (st.Quick, error) {
+		return &fakeQuick{result: func(context.Context) (string, error) { return "finished", nil }}, nil
+	}})
+	defer close(d.release)
+	do(c, "dictate.start")
+	do(c, "dictate.stop")
+	receive(t, d.entered)
+	if r := do(c, "dictate.cancel"); r.Error != string(ErrBusy) {
+		t.Fatalf("cancel after handoff = %q, want busy", r.Error)
+	}
+}

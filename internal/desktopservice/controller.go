@@ -126,6 +126,7 @@ type job struct {
 	state                         string    // under controller.mu
 	code                          ErrorCode // result fields are published by closing done
 	text, detail                  string
+	deliveryStarted               bool // under controller.mu
 	textTooLarge                  bool
 }
 
@@ -527,6 +528,10 @@ func (c *controller) cancelQuick(cap *capture, id string) st.Reply {
 			pending = j
 		}
 	}
+	if pending != nil && pending.deliveryStarted {
+		c.mu.Unlock()
+		return c.reply(pending.captureID, "", "", ErrBusy, "delivery has already started")
+	}
 	if pending != nil {
 		pending.cancel()
 	}
@@ -762,6 +767,7 @@ func (c *controller) deliverQuick(j *job, text string) {
 		j.code = ErrCanceled
 		return
 	}
+	j.deliveryStarted = true
 	paste := c.opts.Paste && c.latestQuick == j.captureID && c.capture == nil && j.target != ""
 	c.mu.Unlock()
 	if c.opts.Desktop == nil {
