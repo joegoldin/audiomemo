@@ -87,3 +87,16 @@ func TestLocalFailureCannotDialCloud(t *testing.T) {
 		t.Fatal("missing local backend must fail before opening mic")
 	}
 }
+
+func TestFailedFinalDoesNotReturnPartialText(t *testing.T) {
+	fail := errors.New("model failed")
+	src := io.NopCloser(bytes.NewReader([]byte{7, 8}))
+	s := newSession(t.Context(), src, func(context.Context) error { return nil }, func(context.Context, []byte) (string, error) { return "prefix", fail }, nil, 100)
+	if _, err := io.Copy(io.Discard, s.feed); err != nil {
+		t.Fatal(err)
+	}
+	text, err := s.Stop(t.Context())
+	if text != "" || !errors.Is(err, fail) {
+		t.Fatalf("returned text=%t error=%v", text != "", err)
+	}
+}

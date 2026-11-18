@@ -203,13 +203,12 @@ func (s *Session) Stop(ctx context.Context) (string, error) {
 		s.text, s.finalErr = s.final(life, b[:len(b)&^1])
 		clear(b)
 		s.pcm.Reset()
-		if s.finalErr != nil && life.Err() == nil && s.preview != nil {
-			s.text = s.preview.FullText()
-			if s.text != "" {
-				s.finalErr = nil
-			}
+		if s.finalErr != nil {
+			// Preview packets can be dropped, so a draft cannot replace the final.
+			s.text = ""
+			return
 		}
-		if s.finalErr == nil && strings.TrimSpace(s.text) == "" {
+		if strings.TrimSpace(s.text) == "" {
 			s.finalErr = errors.Join(errors.New("no speech captured"), err)
 		}
 	})

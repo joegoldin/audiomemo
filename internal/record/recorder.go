@@ -597,7 +597,9 @@ func (r *Recorder) CloseCapture(ctx context.Context) error {
 	go r.Stop()
 	select {
 	case <-r.done:
-		return r.exitErr
+		// Done and Wait report source loss. The capture-release barrier only
+		// reports whether the input is closed, so buffered PCM can finish.
+		return nil
 	case <-ctx.Done():
 		_ = r.cmd.Process.Kill()
 		return ctx.Err()
