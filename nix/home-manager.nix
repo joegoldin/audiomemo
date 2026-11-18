@@ -10,6 +10,8 @@ let
   configFile = tomlFormat.generate "audiomemo-config.toml" cfg.settings;
 in
 {
+  imports = [ ./desktop-module.nix ];
+
   options.programs.audiomemo = {
     enable = lib.mkEnableOption "audiomemo audio recording and transcription CLI";
 

@@ -22,36 +22,73 @@
           url = "https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base.bin";
           hash = "sha256-YO1bw90U7qhWST0zQ0m0BXgt3K8AKNS130CINF+6Lv4=";
         };
+        toolPath = pkgs.lib.makeBinPath [
+          pkgs.ffmpeg
+          pkgs.whisper-cpp
+          nemo-speech
+        ];
+        plasmaHelper = pkgs.stdenv.mkDerivation {
+          pname = "audiomemo-plasma";
+          version = "0.2.0";
+          src = ./desktop/linux;
+          nativeBuildInputs = [
+            pkgs.cmake
+            pkgs.pkg-config
+            pkgs.wayland-scanner
+            pkgs.python3
+            pkgs.kdePackages.wrapQtAppsHook
+          ];
+          buildInputs = [
+            pkgs.wayland
+            pkgs.wayland-protocols
+            pkgs.kdePackages.qtbase
+            pkgs.kdePackages.qtwayland
+            pkgs.kdePackages.layer-shell-qt
+            pkgs.kdePackages.kstatusnotifieritem
+          ];
+          cmakeFlags = [ "-DAUDIOMEMO_DESKTOP_TESTS=ON" ];
+          doCheck = true;
+          dontWrapQtApps = true;
+          postFixup = ''wrapQtApp "$out/libexec/audiomemo-desktop-linux"'';
+        };
         audiomemo = pkgs.buildGoModule {
           pname = "audiomemo";
-          version = "0.1.0";
+          version = "0.2.0";
           src = ./.;
           inherit vendorHash;
-          ldflags = [ "-X github.com/joegoldin/audiomemo/cmd.version=0.1.0" ];
+          ldflags = [
+            "-X github.com/joegoldin/audiomemo/cmd.version=0.2.0"
+          ]
+          ++ pkgs.lib.optionals pkgs.stdenv.hostPlatform.isDarwin [ "-X main.desktopToolPath=${toolPath}" ];
           nativeBuildInputs = [
             pkgs.makeWrapper
             pkgs.installShellFiles
           ];
-          postInstall = ''
-            ln -s $out/bin/audiomemo $out/bin/record
-            ln -s $out/bin/audiomemo $out/bin/rect
-            ln -s $out/bin/audiomemo $out/bin/recw
-            ln -s $out/bin/audiomemo $out/bin/scribe
-            ln -s $out/bin/audiomemo $out/bin/transcribe
-            wrapProgram $out/bin/audiomemo \
-              --prefix PATH : ${
-                pkgs.lib.makeBinPath [
-                  pkgs.ffmpeg
-                  pkgs.whisper-cpp
-                  nemo-speech
-                ]
-              }
+          postInstall =
+            pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isDarwin ''
+              app="$out/Applications/AudioMemo.app/Contents"
+              install -Dm755 "$out/bin/audiomemo" "$app/MacOS/audiomemo"
+              install -m644 desktop/macos/Info.plist "$app/Info.plist"
+            ''
+            + pkgs.lib.optionalString pkgs.stdenv.hostPlatform.isLinux ''
+              mkdir -p "$out/libexec"
+              ln -s "${plasmaHelper}/libexec/audiomemo-desktop-linux" "$out/libexec/"
+            ''
+            + ''
+              installManPage man/audiomemo.1
+              ln -s $out/bin/audiomemo $out/bin/record
+              ln -s $out/bin/audiomemo $out/bin/rect
+              ln -s $out/bin/audiomemo $out/bin/recw
+              ln -s $out/bin/audiomemo $out/bin/scribe
+              ln -s $out/bin/audiomemo $out/bin/transcribe
+              wrapProgram $out/bin/audiomemo \
+                --prefix PATH : ${toolPath}
 
-            installShellCompletion --cmd audiomemo \
-              --bash <($out/bin/audiomemo completion bash) \
-              --fish <($out/bin/audiomemo completion fish) \
-              --zsh  <($out/bin/audiomemo completion zsh)
-          '';
+              installShellCompletion --cmd audiomemo \
+                --bash <($out/bin/audiomemo completion bash) \
+                --fish <($out/bin/audiomemo completion fish) \
+                --zsh  <($out/bin/audiomemo completion zsh)
+            '';
         };
       in
       {
@@ -63,7 +100,7 @@
 
         checks.default = pkgs.buildGoModule {
           pname = "audiomemo-tests";
-          version = "0.1.0";
+          version = "0.2.0";
           src = ./.;
           inherit vendorHash;
           nativeBuildInputs = [

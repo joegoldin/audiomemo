@@ -606,3 +606,48 @@ The opt-in check uses only the repository's `testdata/test.ogg`.
 
     # Manage devices interactively
     audiomemo device
+
+## Desktop dictation and meetings
+
+The desktop is optional. `record`, `rect`, `recw`, `scribe`, `transcribe`, their pipes, and `record --stream` do not depend on it. **Quick Scribe** is for ephemeral dictation; standalone **`scribe`** still saves a transcript. **Meetings** intentionally keep the original inputs *and* a listening mix. Neither new mode uses the ordinary CLI's configured cloud fallback.
+
+Configure the inputs you actually want to record. For example, for a USB mic and speaker monitor already aliased as `mic` and `speakers`:
+
+```toml
+[device_groups]
+combo = ["mic", "speakers"]
+
+[desktop]
+meeting_device = "combo"
+dictation_mic = "mic"
+paste = false
+
+[device_roles]
+mic = "us"
+speakers = "them"
+```
+
+On a Mac, use `system-audio` as the target of the remote alias. A MacBook mic plus System audio uses the same group workflow as Linux. Roles are optional: explicit assignments win, monitors default to Them, the configured mic (or OS default when applicable) defaults to Us, and other inputs default to Them. A group is not a microphone. Use `audiomemo device` to see and cycle assignments, or `audiomemo device role speakers auto` to restore inference. Assign a second mic to Us if it represents someone else in the room. **Role is not speaker identity**: diarization speaker numbers are local to their input. Speaker playback may also bleed into local microphones; use headphones for the cleanest separation.
+
+Run `audiomemo daemon` in your graphical session. It stays in the foreground. `audiomemo daemon --headless` runs without the tray; `audiomemo status --json` inspects it and `audiomemo quit` stops it. No microphone is opened just because the daemon starts. Bind a global shortcut on Plasma under **System Settings → Keyboard → Shortcuts → Add New → Command or Script** to the packaged `audiomemo dictate toggle`. Dictation uses an optional click-through caption; stop delivers once, cancel discards. Clipboard managers can retain dictation even when AudioMemo writes no file. Paste is opt-in and copy is the safe fallback when the app cannot confirm the target.
+
+```fish
+audiomemo meeting start -D combo       # prints the admitted meeting ID
+audiomemo meeting stop                 # prints the durable bundle path
+# Alternatively, while recording:
+audiomemo meeting stop --print text > call.txt
+```
+
+Stop closes the sources before final transcription. Keep the bundle if inference or mixing fails; `audiomemo meeting retry <bundle>` works on the originals, not a fresh recording. There is no automatic expiry. Disk use scales with track count: 48 kHz 16-bit mono PCM alone is about 346 MB per hour per input, plus the listening mix, metadata and any exports. Use `man audiomemo` for commands, pipes, signals and role precedence.
+
+Home Manager can supply the service without starting it at login:
+
+```nix
+programs.audiomemo = {
+  enable = true;
+  desktop.enable = true;
+  desktop.autoStart = false; # opt in separately after testing
+};
+```
+
+On Plasma the service belongs to the graphical systemd user session. On macOS autostart is an Aqua LaunchAgent, not a root daemon. Permit microphone use for dictation, system audio only for meetings that include it, and Accessibility only for optional synthetic paste. Don't assume a new or unsigned Nix build inherits an old macOS permission grant. Quit before switching generations while recording. Set `autoStart = false` to disable login startup; removing the service does not remove recordings.

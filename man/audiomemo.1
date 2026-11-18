@@ -1,0 +1,98 @@
+.TH AUDIOMEMO 1 "November 2026" "AudioMemo 0.2.0"
+.SH NAME
+audiomemo, record, rect, recw, scribe, transcribe \- record and transcribe audio
+.SH SYNOPSIS
+.B audiomemo record
+.RI [ options ] " [name]"
+.br
+.B audiomemo scribe
+.RI [ options ] " [name]"
+.br
+.B audiomemo transcribe
+.RI [ options ] " file|-"
+.br
+.B audiomemo device
+.RI [ list | alias | group | default | role ]
+.br
+.B audiomemo daemon
+.RB [ \-\-headless ]
+.RB [ \-\-config " file" ]
+.br
+.B audiomemo status
+.RB [ \-\-json ]
+.br
+.B audiomemo dictate
+.I start|stop|toggle|cancel
+.br
+.B audiomemo meeting
+.I start|stop|retry
+.br
+.B audiomemo quit
+.SH DESCRIPTION
+Standalone commands never need a background service, display, or desktop permission for clipboard insertion. Device capture itself requires permission to record on the host. The desktop daemon runs in the foreground; use a graphical user service for supervision. Control commands talk to the current user's daemon and do not launch it.
+.SH RECORDING
+.B record
+and
+.B rect
+record the selected device or group. A group is mixed into one ordinary recording. Use
+.B \-D
+with an alias or group. The terminal interface does not consume stdout when piped.
+.B recw
+runs local Whisper after capture without live preview.
+.B scribe
+runs local live NeMo, keeps the transcript and writes no audio file. Its
+.B \-r
+option discards audio after live recognition. Cloud fallback for scribe requires
+.BR \-\-cloud .
+Ordinary recording and transcription honor the configured backend: auto with an ElevenLabs key can upload audio if local inference fails. Use
+.B transcribe \-\-backend nemo
+for strictly local file transcription. On macOS
+.B transcribe vm
+selects a downloaded Voice Memo.
+.SH DESKTOP DICTATION
+.B dictate toggle
+starts a microphone-only capture or finishes the current dictation. Start and stop can be bound separately; cancel discards without copy or paste. A click-through caption shows provisional text when the desktop supports it. No audio or transcript file is created. Final text is copied by default; paste is opt-in and must fall back to copy when focus is uncertain. A clipboard manager or receiving application can preserve the result. The five-minute PCM limit ends a clip; no microphone is held between sessions. Starting dictation must not displace a meeting.
+.SH MEETINGS
+.B meeting start \-D group
+starts capture and prints its ID. Use a configured meeting device or group to avoid selecting one each time. The recording indicator and status distinguish capture from finalization.
+.B meeting stop
+closes the inputs and prints the bundle path. It does not wait for model inference.
+.B meeting stop \-\-print text
+waits for the final result and prints only text. To wait but keep the path output, use
+.BR \-\-wait .
+.B meeting retry
+.I bundle
+retries failed derived output in a closed bundle under the configured meetings root. Never delete originals to retry. Meetings do not fall back to a cloud provider.
+.PP
+Each input keeps its own track. Times and gaps refer to the same meeting timeline. A listening mix and transcript are derived from those tracks. Us/Them labels identify the side an input came from, not a person's identity; speaker IDs apply only within a track. Audio played through speakers can reach both tracks. Headphones reduce this ambiguity.
+.SH DEVICE ROLES
+.B device role
+.I alias-or-device auto|us|them
+sets or resets an endpoint override. In the device manager use the role key to cycle assignments. An explicit role wins; monitors and system audio default to Them; the configured default mic defaults to Us. If the default is a group or no usable default mic exists, the OS default mic is Us when known. Other devices are Them. A group never confers its own role on all members.
+.SH OUTPUT AND SIGNALS
+.B record \-\-print
+accepts auto, path, text, both, or none. Auto prints a path to a terminal and text to a pipe. Diagnostics go to stderr. With
+.B record \-\-stream
+stdout is exclusively newline-delimited JSON: start, level, partial, commit, final, error, end. A partial replaces the previous partial; it must not be appended as a new sentence. Commands intended to be piped never emit desktop messages on stdout. SIGINT/SIGTERM end an unattended recording; interrupting a waiting meeting client does not end another session. Stopping the daemon closes capture and preserves meeting originals. A failed command exits nonzero.
+.SH FILES
+.I $XDG_CONFIG_HOME/audiomemo/config.toml
+(default ~/.config/audiomemo/config.toml). See config.example.toml for aliases and provider configuration.
+.PP
+.I ~/Recordings
+is the default recording directory. Meeting bundles occupy additional space for each source plus the mix. They are kept until explicitly removed. Inspect the bundle manifest for its track list and gaps. Manually clearing the clipboard or quitting the daemon does not delete meeting bundles.
+.SH EXAMPLES
+.nf
+record \-D mic \-\-no-tui \-\-max-duration 20s \-\-print text
+transcribe \-\-backend nemo \- < sample.ogg
+scribe \-r \-D mic
+
+audiomemo device role mic us
+audiomemo device role speakers them
+audiomemo meeting start \-D combo
+audiomemo meeting stop \-\-print text > call.txt
+.fi
+.SH SEE ALSO
+.BR ffmpeg (1),
+.BR systemctl (1),
+.BR launchctl (1).
+Use the subcommand's \-\-help for all flags.

@@ -60,3 +60,14 @@ default_backend = "auto"
 # api_key = ""
 # api_key_file = ""
 # model = "voxtral-mini-latest"
+
+# Optional desktop controls (standalone commands do not require the daemon).
+[desktop]
+# meeting_device = "meeting" # name of an existing device group
+# dictation_mic = "mic"     # exactly one microphone, never a system monitor
+paste = false
+
+# Overrides for individual aliases or devices. Omit to infer (Auto).
+[device_roles]
+# mic = "us"
+# desktop = "them"

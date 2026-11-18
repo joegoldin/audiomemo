@@ -184,3 +184,40 @@ func readManifest(root *os.Root, id string) (BundleManifest, error) {
 	}
 	return m, validateSources(sources)
 }
+
+// RetryPath admits only an unlocked, valid bundle immediately under this
+// recording directory. The finalizer takes the lock again before writing.
+func RetryPath(output, bundle string) (string, error) {
+	base, err := filepath.Abs(output)
+	if err != nil {
+		return "", err
+	}
+	base, err = filepath.EvalSymlinks(base)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Join(base, "meetings")
+	path, err := filepath.Abs(bundle)
+	if err != nil {
+		return "", err
+	}
+	canonical, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", err
+	}
+	if filepath.Dir(canonical) != parent || filepath.Base(path) != filepath.Base(canonical) {
+		return "", errors.New("retry requires a bundle inside the configured meetings folder")
+	}
+	r, err := openBundle(canonical)
+	if err != nil {
+		return "", err
+	}
+	defer r.Close()
+	lock, err := lockBundle(r)
+	if err != nil {
+		return "", err
+	}
+	defer lock.Close()
+	_, err = readManifest(r, filepath.Base(canonical))
+	return canonical, err
+}
