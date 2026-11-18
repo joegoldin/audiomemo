@@ -129,15 +129,30 @@ func (s *Streamer) Start(ctx context.Context, pcmReader io.Reader, transcriptPat
 	if err != nil {
 		return fmt.Errorf("open preview transcript: %w", err)
 	}
+	s.file = f
+	return s.start(ctx, pcmReader, f)
+}
+
+// StartMemory is for a local preview that must not create a transcript file.
+func (s *Streamer) StartMemory(ctx context.Context, pcmReader io.Reader) error {
+	if s.local == nil || s.fallback {
+		return fmt.Errorf("memory-only preview requires an explicit local backend")
+	}
+	return s.start(ctx, pcmReader, io.Discard)
+}
+func (s *Streamer) start(ctx context.Context, pcmReader io.Reader, dest io.Writer) error {
 	derived, cancel := context.WithCancel(ctx)
-	s.cancel, s.reader, s.file, s.writer = cancel, pcmReader, f, bufio.NewWriter(f)
+	s.cancel, s.reader, s.writer = cancel, pcmReader, bufio.NewWriter(dest)
 	s.done = make(chan struct{})
+	var err error
 	var initial *websocket.Conn
 	if !s.managed {
 		initial, err = s.dialCloud(derived)
 		if err != nil {
 			cancel()
-			f.Close()
+			if s.file != nil {
+				s.file.Close()
+			}
 			close(s.done)
 			return err
 		}

@@ -2,6 +2,7 @@ package record
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -588,4 +589,17 @@ func (r *Recorder) Wait() error {
 
 func EnsureOutputDir(dir string) error {
 	return os.MkdirAll(dir, 0755)
+}
+
+// CloseCapture bounds desktop shutdown when a disconnected input stops responding
+// to ffmpeg's normal quit command. Wait still owns pipe and native-tap cleanup.
+func (r *Recorder) CloseCapture(ctx context.Context) error {
+	go r.Stop()
+	select {
+	case <-r.done:
+		return r.exitErr
+	case <-ctx.Done():
+		_ = r.cmd.Process.Kill()
+		return ctx.Err()
+	}
 }
