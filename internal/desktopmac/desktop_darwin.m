@@ -246,7 +246,10 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
     self.chooseMeeting = [self add:@"Choose Meeting Group…" tag:-2 menu:menu];
     [self add:@"Copy Last Result" tag:AMCopyLast menu:menu];
     [menu addItem:NSMenuItem.separatorItem];
-    NSMenuItem *key = [self add:@"Global shortcut: Control–Option–Space" tag:-1 menu:menu];
+    // A host can map the Dictation consumer key to F18 without an event tap.
+    BOOL useF18 = [NSProcessInfo.processInfo.environment[@"AUDIOMEMO_MAC_HOTKEY"] isEqualToString:@"F18"];
+    NSString *shortcut = useF18 ? @"F18" : @"Control–Option–Space";
+    NSMenuItem *key = [self add:[@"Global shortcut: " stringByAppendingString:shortcut] tag:-1 menu:menu];
     key.enabled = NO;
     [self add:@"Quit AudioMemo" tag:AMQuit menu:menu];
     self.item.menu = menu;
@@ -255,8 +258,8 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
     EventHandlerRef handler = NULL;
     EventHotKeyRef hotKey = NULL;
     if (InstallEventHandler(GetApplicationEventTarget(), onHotKey, 2, events, (__bridge void *)self, &handler) != noErr ||
-        RegisterEventHotKey(kVK_Space, controlKey | optionKey, hotKeyID, GetApplicationEventTarget(), 0, &hotKey) != noErr) {
-        key.title = @"Global shortcut unavailable (Control–Option–Space). Use the menu.";
+        RegisterEventHotKey(useF18 ? kVK_F18 : kVK_Space, useF18 ? 0 : (controlKey | optionKey), hotKeyID, GetApplicationEventTarget(), 0, &hotKey) != noErr) {
+        key.title = [NSString stringWithFormat:@"Global shortcut unavailable (%@). Use the menu.", shortcut];
         self.item.button.toolTip = key.title;
     }
     self.handler = handler;

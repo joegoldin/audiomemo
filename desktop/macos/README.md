@@ -57,3 +57,8 @@ across upgrades. A stable bundle ID or profile symlink alone is not sufficient:
 a bare, unsigned or ad hoc Nix-store binary can lose grants when the store path or
 code changes. Development packaging must not promise TCC persistence or silently
 reset or renew grants. No signing identity or entitlements are provisioned here.
+
+To use a remapped microphone key, set `AUDIOMEMO_MAC_HOTKEY=F18` in the
+launch agent and map the Dictation consumer usage (`0xC000000CF`) to F18
+(`0x70000006D`) in the host keyboard configuration. F18 toggles the same
+Quick Scribe session and preview; without this setting the default is unchanged.
