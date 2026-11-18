@@ -318,6 +318,7 @@ func (s *Streamer) session(ctx context.Context, conn *websocket.Conn, local bool
 	var partial string
 	var flush <-chan time.Time
 	var timer *time.Timer
+	var flushLimit time.Time
 	defer func() {
 		if timer != nil {
 			timer.Stop()
@@ -331,6 +332,7 @@ func (s *Streamer) session(ctx context.Context, conn *websocket.Conn, local bool
 			if err != nil {
 				return err
 			}
+			flushLimit = time.Now().Add(10 * time.Second)
 			timer = time.NewTimer(3 * time.Second)
 			flush = timer.C
 		case <-flush:
@@ -346,6 +348,11 @@ func (s *Streamer) session(ctx context.Context, conn *websocket.Conn, local bool
 				return fmt.Errorf("live websocket read: %w", event.err)
 			}
 			msg := event.msg
+			// A cold local model can still be decoding queued audio after the
+			// commit. Count transcription progress, not just time since EOF.
+			if local && timer != nil && (msg.Type == "conversation.item.input_audio_transcription.delta" || msg.Type == "conversation.item.input_audio_transcription.completed") {
+				timer.Reset(min(3*time.Second, time.Until(flushLimit)))
+			}
 			switch {
 			case msg.Type == "input_audio_buffer.committed":
 				return nil

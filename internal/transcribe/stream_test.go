@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -588,12 +589,13 @@ func TestStreamerNoReconnectOnAuthError(t *testing.T) {
 // entire recording pipeline.
 func TestStreamerDrainsPipeAfterSendFailure(t *testing.T) {
 	connected := make(chan struct{})
+	var first sync.Once
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		conn, err := wsUpgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return
 		}
-		close(connected)
+		first.Do(func() { close(connected) })
 		// Close immediately so the next client write fails.
 		conn.Close()
 	}))

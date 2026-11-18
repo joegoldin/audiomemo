@@ -59,6 +59,11 @@ func TestLocalLiveProtocol(t *testing.T) {
 			conn.WriteJSON(map[string]string{"type": "conversation.item.input_audio_transcription.delta", "delta": "Hello"})
 			conn.WriteJSON(map[string]string{"type": "conversation.item.input_audio_transcription.delta", "delta": " world"})
 			conn.WriteJSON(map[string]string{"type": "conversation.item.input_audio_transcription.completed", "transcript": "Hello world."})
+			// A CPU model may continue decoding past the original EOF deadline.
+			// Keep each gap shorter than the idle timeout but their sum longer.
+			time.Sleep(1800 * time.Millisecond)
+			conn.WriteJSON(map[string]string{"type": "conversation.item.input_audio_transcription.delta", "delta": "!"})
+			time.Sleep(1800 * time.Millisecond)
 			conn.WriteJSON(map[string]string{"type": "input_audio_buffer.committed"})
 			return
 		}
