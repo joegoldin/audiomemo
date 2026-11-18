@@ -1,0 +1,28 @@
+package cmd
+
+import (
+	"github.com/joegoldin/audiomemo/internal/sessiontypes"
+	"github.com/spf13/cobra"
+)
+
+func init() { rootCmd.AddCommand(newDictateCommand()) }
+
+func newDictateCommand() *cobra.Command {
+	command := &cobra.Command{Use: "dictate", Short: "Control Quick Scribe"}
+	for action, desc := range map[string]string{
+		"start": "Start dictation", "stop": "Stop and finalize dictation", "toggle": "Start or stop dictation", "cancel": "Discard dictation or cancel its pending result",
+	} {
+		var device string
+		control := &cobra.Command{Use: action, Short: desc, Args: cobra.NoArgs,
+			RunE: func(cmd *cobra.Command, _ []string) error {
+				_, err := desktopRequest(cmd, sessiontypes.Request{Action: "dictate." + action, Device: device})
+				return err
+			},
+		}
+		if action == "start" || action == "toggle" {
+			control.Flags().StringVarP(&device, "device", "D", "", "microphone or alias")
+		}
+		command.AddCommand(control)
+	}
+	return command
+}
