@@ -27,6 +27,15 @@
           pkgs.whisper-cpp
           nemo-speech
         ];
+        # The Nix build namespace can report / as owned by an unmapped UID.
+        # Give test processes a private root rather than relaxing socket checks.
+        linuxTestRoot = pkgs.writeShellScript "audiomemo-test-root" ''
+          exec ${pkgs.bubblewrap}/bin/bwrap --unshare-user \
+            --ro-bind /nix /nix --bind "$NIX_BUILD_TOP" "$NIX_BUILD_TOP" \
+            --ro-bind /bin /bin --ro-bind /etc /etc --tmpfs /tmp \
+            --proc /proc --dev-bind /dev /dev --chdir "$PWD" -- "$@"
+        '';
+        testFlags = pkgs.lib.optionals pkgs.stdenv.hostPlatform.isLinux [ "-exec=${linuxTestRoot}" ];
         plasmaHelper = pkgs.stdenv.mkDerivation {
           pname = "audiomemo-plasma";
           version = "0.2.0";
@@ -56,6 +65,7 @@
           version = "0.2.0";
           src = ./.;
           inherit vendorHash;
+          checkFlags = testFlags;
           ldflags = [
             "-X github.com/joegoldin/audiomemo/cmd.version=0.2.0"
           ]
@@ -103,6 +113,7 @@
           version = "0.2.0";
           src = ./.;
           inherit vendorHash;
+          checkFlags = testFlags;
           nativeBuildInputs = [
             pkgs.ffmpeg
             pkgs.whisper-cpp
