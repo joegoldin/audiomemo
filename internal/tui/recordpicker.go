@@ -47,15 +47,16 @@ type RecordPickerResult struct {
 type recordPickerErrorMsg struct{ err error }
 
 type recordPickerModel struct {
-	err      error
-	state    recordPickerState
-	items    []rpItem     // ordered: aliases, groups, devices
-	selected map[int]bool // multi-select tracking
-	cursor   int
-	config   *config.Config
-	result   RecordPickerResult
-	width    int
-	height   int
+	inventory []record.Device
+	err       error
+	state     recordPickerState
+	items     []rpItem     // ordered: aliases, groups, devices
+	selected  map[int]bool // multi-select tracking
+	cursor    int
+	config    *config.Config
+	result    RecordPickerResult
+	width     int
+	height    int
 }
 
 // ---------------------------------------------------------------------------
@@ -105,6 +106,7 @@ func (m *recordPickerModel) loadDevices() tea.Msg {
 
 func (m *recordPickerModel) buildItems(devices []record.Device) {
 	m.items = nil
+	m.inventory = devices
 
 	// Set of raw device names covered by aliases.
 	aliased := map[string]bool{}
@@ -562,6 +564,19 @@ func (m *recordPickerModel) viewPick() string {
 				}
 			}
 
+			var roles []string
+			for _, raw := range item.devices {
+				key := record.ResolveDeviceName(raw, m.inventory)
+				for _, d := range m.inventory {
+					if d.Name == key {
+						roles = append(roles, record.RoleLabel(m.config, d, m.inventory))
+						break
+					}
+				}
+			}
+			if len(roles) > 0 {
+				detail += "  " + strings.Join(roles, " + ")
+			}
 			line := cursor + hkStr + check + " " + nameStyle.Render(label)
 			if detail != "" {
 				line += "  " + detail

@@ -360,6 +360,34 @@ func (dm *DeviceManager) handleBrowseKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return dm, dm.startVU()
 		}
 
+	case "r":
+		if len(dm.devices) == 0 {
+			return dm, nil
+		}
+		key := dm.devices[dm.cursor].Name
+		if alias := dm.aliasForDevice(key); alias != "" {
+			key = alias
+		}
+		previous := dm.config.DeviceRoles[key]
+		next := "us"
+		if previous == "us" {
+			next = "them"
+		} else if previous == "them" {
+			next = "auto"
+		}
+		if err := dm.config.SetDeviceRole(key, next); err != nil {
+			dm.message = err.Error()
+		} else if err := dm.saveConfig(); err != nil {
+			if previous == "" {
+				delete(dm.config.DeviceRoles, key)
+			} else {
+				dm.config.DeviceRoles[key] = previous
+			}
+			dm.message = err.Error()
+		} else {
+			dm.message = "Role: " + next
+		}
+		return dm, nil
 	case "a":
 		if len(dm.devices) == 0 {
 			dm.message = "No devices loaded."
@@ -651,6 +679,7 @@ func (dm *DeviceManager) handleConfirmDeleteAliasKey(msg tea.KeyMsg) (tea.Model,
 		if dm.aliasBrowseCursor < len(aliases) {
 			name := aliases[dm.aliasBrowseCursor]
 			delete(dm.config.Devices, name)
+			delete(dm.config.DeviceRoles, name)
 			// Remove from all groups
 			for gName, members := range dm.config.DeviceGroups {
 				filtered := members[:0]
@@ -1041,7 +1070,7 @@ func (dm *DeviceManager) renderDeviceLine(d record.Device, idx int) string {
 	if alias != "" {
 		line += " " + dmAliasTag.Render("["+alias+"]")
 	}
-	return line + "\n"
+	return line + "  " + record.RoleLabel(dm.config, d, dm.devices) + "\n"
 }
 
 func (dm *DeviceManager) viewConfigPanel() string {
@@ -1147,7 +1176,7 @@ func (dm *DeviceManager) viewKeys() string {
 	case DMTestPlayback:
 		return dmDimStyle.Render("Playing back... [ctrl+c] cancel")
 	default:
-		return dmDimStyle.Render("[a]lias  [A]liases  [g]roup  [G]roups  [d]efault  [t]est  [q]uit")
+		return dmDimStyle.Render("[a]lias  [A]liases  [g]roup  [G]roups  [d]efault  [r]ole  [t]est  [q]uit")
 	}
 }
 

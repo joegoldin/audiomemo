@@ -16,6 +16,8 @@ import (
 const CurrentOnboardVersion = 1
 
 type Config struct {
+	DeviceRoles    map[string]string   `toml:"device_roles,omitempty"`
+	Desktop        DesktopConfig       `toml:"desktop,omitempty"`
 	OnboardVersion int                 `toml:"onboard_version"`
 	Record         RecordConfig        `toml:"record"`
 	Devices        map[string]string   `toml:"devices"`
@@ -320,4 +322,31 @@ func (c *Config) ResolveDevice(name string) ([]string, error) {
 
 	// Treat as raw device name.
 	return []string{name}, nil
+}
+
+type DesktopConfig struct {
+	MeetingDevice string `toml:"meeting_device,omitempty"`
+	DictationMic  string `toml:"dictation_mic,omitempty"`
+	Paste         bool   `toml:"paste,omitempty"`
+}
+
+func (c *Config) SetDeviceRole(name, role string) error {
+	if name == "" {
+		return fmt.Errorf("empty device name")
+	}
+	if _, ok := c.DeviceGroups[name]; ok {
+		return fmt.Errorf("set roles on group members, not group %q", name)
+	}
+	switch role {
+	case "auto":
+		delete(c.DeviceRoles, name)
+	case "us", "them":
+		if c.DeviceRoles == nil {
+			c.DeviceRoles = map[string]string{}
+		}
+		c.DeviceRoles[name] = role
+	default:
+		return fmt.Errorf("role must be auto, us or them")
+	}
+	return nil
 }

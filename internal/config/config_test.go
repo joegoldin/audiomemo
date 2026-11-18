@@ -51,10 +51,10 @@ model = "nova-2"
 		t.Errorf("expected default channels 1, got %d", cfg.Record.Channels)
 	}
 	if cfg.Transcribe.DefaultBackend != "deepgram" {
-		t.Errorf("expected deepgram, got %s", cfg.Transcribe.DefaultBackend)
+		t.Error("expected deepgram")
 	}
 	if cfg.Transcribe.Deepgram.APIKey != "test-key" {
-		t.Errorf("expected test-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("expected test-key")
 	}
 }
 
@@ -69,15 +69,17 @@ func TestLoadMissingFileReturnsDefault(t *testing.T) {
 }
 
 func TestEnvVarOverridesConfig(t *testing.T) {
+	isolateProviderEnv(t)
 	t.Setenv("DEEPGRAM_API_KEY", "env-key")
 	cfg := Default()
 	cfg.ApplyEnv()
 	if cfg.Transcribe.Deepgram.APIKey != "env-key" {
-		t.Errorf("expected env-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("expected env-key")
 	}
 }
 
 func TestEnvVarFileOverridesConfig(t *testing.T) {
+	isolateProviderEnv(t)
 	dir := t.TempDir()
 	keyFile := filepath.Join(dir, "deepgram_key")
 	os.WriteFile(keyFile, []byte("file-key\n"), 0600)
@@ -86,11 +88,12 @@ func TestEnvVarFileOverridesConfig(t *testing.T) {
 	cfg := Default()
 	cfg.ApplyEnv()
 	if cfg.Transcribe.Deepgram.APIKey != "file-key" {
-		t.Errorf("expected file-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("expected file-key")
 	}
 }
 
 func TestDirectEnvVarTakesPriorityOverFile(t *testing.T) {
+	isolateProviderEnv(t)
 	dir := t.TempDir()
 	keyFile := filepath.Join(dir, "deepgram_key")
 	os.WriteFile(keyFile, []byte("file-key"), 0600)
@@ -100,11 +103,12 @@ func TestDirectEnvVarTakesPriorityOverFile(t *testing.T) {
 	cfg := Default()
 	cfg.ApplyEnv()
 	if cfg.Transcribe.Deepgram.APIKey != "direct-key" {
-		t.Errorf("expected direct-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("expected direct-key")
 	}
 }
 
 func TestConfigAPIKeyFileFallback(t *testing.T) {
+	isolateProviderEnv(t)
 	dir := t.TempDir()
 	keyFile := filepath.Join(dir, "deepgram_key")
 	os.WriteFile(keyFile, []byte("  config-file-key  \n"), 0600)
@@ -113,11 +117,12 @@ func TestConfigAPIKeyFileFallback(t *testing.T) {
 	cfg.Transcribe.Deepgram.APIKeyFile = keyFile
 	cfg.ApplyEnv()
 	if cfg.Transcribe.Deepgram.APIKey != "config-file-key" {
-		t.Errorf("expected config-file-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("expected config-file-key")
 	}
 }
 
 func TestConfigAPIKeyTakesPriorityOverKeyFile(t *testing.T) {
+	isolateProviderEnv(t)
 	dir := t.TempDir()
 	keyFile := filepath.Join(dir, "deepgram_key")
 	os.WriteFile(keyFile, []byte("file-key"), 0600)
@@ -127,11 +132,12 @@ func TestConfigAPIKeyTakesPriorityOverKeyFile(t *testing.T) {
 	cfg.Transcribe.Deepgram.APIKeyFile = keyFile
 	cfg.ApplyEnv()
 	if cfg.Transcribe.Deepgram.APIKey != "inline-key" {
-		t.Errorf("expected inline-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("expected inline-key")
 	}
 }
 
 func TestAPIKeyFileAllBackends(t *testing.T) {
+	isolateProviderEnv(t)
 	dir := t.TempDir()
 	dgFile := filepath.Join(dir, "deepgram")
 	oaFile := filepath.Join(dir, "openai")
@@ -150,25 +156,26 @@ func TestAPIKeyFileAllBackends(t *testing.T) {
 	cfg.ApplyEnv()
 
 	if cfg.Transcribe.Deepgram.APIKey != "dg-key" {
-		t.Errorf("deepgram: expected dg-key, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("deepgram: expected dg-key")
 	}
 	if cfg.Transcribe.OpenAI.APIKey != "oa-key" {
-		t.Errorf("openai: expected oa-key, got %s", cfg.Transcribe.OpenAI.APIKey)
+		t.Error("openai: expected oa-key")
 	}
 	if cfg.Transcribe.Mistral.APIKey != "ms-key" {
-		t.Errorf("mistral: expected ms-key, got %s", cfg.Transcribe.Mistral.APIKey)
+		t.Error("mistral: expected ms-key")
 	}
 	if cfg.Transcribe.Whisper.HFToken != "hf-key" {
-		t.Errorf("hftoken: expected hf-key, got %s", cfg.Transcribe.Whisper.HFToken)
+		t.Error("hftoken: expected hf-key")
 	}
 }
 
 func TestAPIKeyFileMissing(t *testing.T) {
+	isolateProviderEnv(t)
 	cfg := Default()
 	cfg.Transcribe.Deepgram.APIKeyFile = "/nonexistent/key"
 	cfg.ApplyEnv()
 	if cfg.Transcribe.Deepgram.APIKey != "" {
-		t.Errorf("expected empty key for missing file, got %s", cfg.Transcribe.Deepgram.APIKey)
+		t.Error("expected empty key for missing file")
 	}
 }
 
@@ -472,5 +479,14 @@ zoom = ["mic", "desktop"]
 	}
 	if !reflect.DeepEqual(cfg.DeviceGroups["zoom"], []string{"mic", "desktop"}) {
 		t.Errorf("expected zoom group, got %v", cfg.DeviceGroups["zoom"])
+	}
+}
+
+// Credential precedence tests must never inspect credentials belonging to the developer.
+func isolateProviderEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{"DEEPGRAM_API_KEY", "OPENAI_API_KEY", "ELEVENLABS_API_KEY", "MISTRAL_API_KEY", "HF_TOKEN"} {
+		t.Setenv(name, "")
+		t.Setenv(name+"_FILE", "")
 	}
 }

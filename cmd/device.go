@@ -67,6 +67,19 @@ var deviceDefaultCmd = &cobra.Command{
 func init() {
 	deviceCmd.PersistentFlags().StringVar(&dConfig, "config", "", "config file path")
 
+	deviceCmd.AddCommand(&cobra.Command{Use: "role <alias-or-device> <auto|us|them>", Short: "Assign a meeting source role; auto restores inference", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
+		cfg, err := loadDeviceConfig()
+		if err != nil {
+			return err
+		}
+		if err = cfg.SetDeviceRole(args[0], args[1]); err != nil {
+			return err
+		}
+		if dConfig != "" {
+			return cfg.SaveTo(dConfig)
+		}
+		return cfg.Save()
+	}})
 	deviceCmd.AddCommand(deviceListCmd)
 	deviceCmd.AddCommand(deviceAliasCmd)
 	deviceCmd.AddCommand(deviceGroupCmd)
@@ -118,7 +131,7 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 		if alias, ok := aliasLookup[d.Name]; ok {
 			tag = fmt.Sprintf("  [%s]", alias)
 		}
-		fmt.Printf("%s%-40s%s\n", prefix, d.Description, tag)
+		fmt.Printf("%s%-40s%s\n", prefix, d.Description, tag+"  "+record.RoleLabel(cfg, d, devices))
 	}
 
 	// Print monitors
@@ -133,7 +146,7 @@ func runDeviceList(cmd *cobra.Command, args []string) error {
 		if alias, ok := aliasLookup[d.Name]; ok {
 			tag = fmt.Sprintf("  [%s]", alias)
 		}
-		fmt.Printf("%s%-40s%s\n", prefix, d.Name, tag)
+		fmt.Printf("%s%-40s%s\n", prefix, d.Name, tag+"  "+record.RoleLabel(cfg, d, devices))
 	}
 
 	// Print aliases
