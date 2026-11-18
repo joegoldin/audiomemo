@@ -41,7 +41,7 @@ func invokeDesktop(t *testing.T, args ...string) (string, string, error) {
 
 func desktopTestRuntime(t *testing.T) {
 	t.Helper()
-	dir, err := os.MkdirTemp("/tmp", "am-cli-")
+	dir, err := os.MkdirTemp("", "am-cli-")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -19,7 +19,7 @@ import (
 func shortRuntime(t *testing.T) string {
 	t.Helper()
 	// Darwin has a short sockaddr_un.sun_path even in the test environment.
-	path, err := os.MkdirTemp("/tmp", "am-g-")
+	path, err := os.MkdirTemp("", "am-g-")
 	if err != nil {
 		t.Fatal(err)
 	}
