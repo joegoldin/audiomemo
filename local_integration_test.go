@@ -137,3 +137,19 @@ func TestCLILocalStreamPreservesNDJSONProtocol(t *testing.T) {
 		t.Fatalf("missing/incorrectly ordered events: %v", types)
 	}
 }
+
+func TestCLIRecordExplicitPathStaysMachineReadableAfterFinalPass(t *testing.T) {
+	cfg, _, dir := localCLIConfig(t)
+	stdout, stderr, err := run(t, "record", "--config", cfg, "--no-tui", "--device", "mic", "-t", "--print", "path", "path-only")
+	if err != nil {
+		t.Fatalf("record: %v\n%s", err, stderr)
+	}
+	path := strings.TrimSpace(stdout)
+	if strings.Contains(path, "\n") || filepath.Dir(path) != dir || filepath.Ext(path) != ".ogg" {
+		t.Fatalf("expected one output path, got %q", stdout)
+	}
+	transcript, err := os.ReadFile(strings.TrimSuffix(path, ".ogg") + ".txt")
+	if err != nil || !strings.Contains(string(transcript), "Final transcript.") {
+		t.Fatalf("expected final sidecar, got %q (%v)", transcript, err)
+	}
+}

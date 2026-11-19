@@ -394,9 +394,8 @@ stderr if there is no controlling terminal), never into the pipe.
 
 What lands on stdout is `--print`:
 
-    auto   the default: the path when stdout is a terminal, the transcript
-           when it is a pipe. Nobody writes `record | pbcopy` to put a
-           filename on the clipboard.
+    auto   the default: only the transcript, whether stdout is a terminal
+           or a pipe. If no transcript is produced, stdout stays empty.
     path   always the recording's path, for `transcribe $(record --print path)`
     text   always the transcript
     both   the path, then the transcript
@@ -610,11 +609,12 @@ The opt-in check uses only the repository's `testdata/test.ogg`.
 ### Us/Them in Scribe
 
 Run `scribe -D combo` for a conversation. When the selected inputs include
-both Us and Them, Scribe keeps the two sides separate **in memory**, shows a
-mixed live preview, and writes a time-ordered `Us:` / `Them:` transcript on
-stop. No `meeting start`, audio bundle, or speaker enrollment is needed. On a
-one-sided selection it keeps the usual plain transcript. `scribe -r` remains
-live-only: it cannot reconstruct source turns once the audio is discarded.
+both Us and Them, Scribe shows two live transcripts: one for Us and one for
+all Them inputs mixed together. The final pass uses the audio held in memory
+to write a time-ordered `Us:` / `Them:` transcript. No `meeting start` or
+audio bundle is needed. A one-sided selection keeps the usual single
+transcript. With `scribe -r`, the two live transcripts are still labeled, but
+there is no final pass or audio retained for one.
 The final labels identify inputs, not people within an input. A previously
 mixed audio file has no Us/Them provenance to recover.
 
@@ -638,15 +638,15 @@ mic = "us"
 speakers = "them"
 ```
 
-On a Mac, use `system-audio` as the target of the remote alias. A MacBook mic plus System audio uses the same group workflow as Linux. Roles are optional: explicit assignments win, monitors default to Them, the configured mic (or OS default when applicable) defaults to Us, and other inputs default to Them. A group is not a microphone. Use `audiomemo device` to see and cycle assignments, or `audiomemo device role speakers auto` to restore inference. Assign a second mic to Us if it represents someone else in the room. **Role is not speaker identity**: diarization speaker numbers are local to their input. Speaker playback may also bleed into local microphones; use headphones for the cleanest separation.
+On a Mac, use `system-audio` as the target of the remote alias. A MacBook mic plus System audio uses the same group workflow as Linux. Roles are optional: explicit assignments win, monitors default to Them, the configured mic (or OS default when applicable) defaults to Us, and other inputs default to Them. Use `audiomemo device` to see and cycle assignments, or `audiomemo device role speakers auto` to restore inference. Assign a second mic to Us if it represents someone else in the room. **Role is not speaker identity**: diarization speaker numbers are local to their input. Speaker playback may also bleed into local microphones; use headphones for the cleanest separation.
 
-Run `audiomemo daemon` in your graphical session. It stays in the foreground. `audiomemo daemon --headless` runs without the tray; `audiomemo status --json` inspects it and `audiomemo quit` stops it. No microphone is opened just because the daemon starts. Bind a global shortcut on Plasma under **System Settings → Keyboard → Shortcuts → Add New → Command or Script** to the packaged `audiomemo dictate toggle`. Dictation uses an optional click-through caption; stop delivers once, cancel discards. Clipboard managers can retain dictation even when AudioMemo writes no file. Paste is opt-in and copy is the safe fallback when the app cannot confirm the target.
+Run `audiomemo daemon` in your graphical session. It stays in the foreground. `audiomemo daemon --headless` runs without the tray; `audiomemo status --json` inspects it and `audiomemo quit` stops it. No microphone is opened just because the daemon starts. Bind a global shortcut on Plasma under **System Settings → Keyboard → Shortcuts → Add New → Command or Script** to the packaged `audiomemo dictate toggle`. The click-through caption appears while audio opens, shows the input level and live text, then animates while the final model refines it. Stop copies the final text once; cancel discards it. Use `-D combo` on the shortcut command for both sides, or leave it off for the configured microphone. `audiomemo dictate last` prints the last completed result from this daemon session, even if copying failed; add `--copy` to retry the clipboard. Clipboard managers can retain dictation even when AudioMemo writes no file. Paste is opt-in and copy is the safe fallback when the app cannot confirm the target.
 
 ```fish
 audiomemo meeting start -D combo       # prints the admitted meeting ID
-audiomemo meeting stop                 # prints the durable bundle path
+audiomemo meeting stop > call.txt     # waits and writes only the transcript
 # Alternatively, while recording:
-audiomemo meeting stop --print text > call.txt
+audiomemo meeting stop --print path   # prints the durable bundle path
 ```
 
 Stop closes the sources before final transcription. Keep the bundle if inference or mixing fails; `audiomemo meeting retry <bundle>` works on the originals, not a fresh recording. There is no automatic expiry. Disk use scales with track count: 48 kHz 16-bit mono PCM alone is about 346 MB per hour per input, plus the listening mix, metadata and any exports. Use `man audiomemo` for commands, pipes, signals and role precedence.
@@ -661,4 +661,4 @@ programs.audiomemo = {
 };
 ```
 
-On Plasma the service belongs to the graphical systemd user session. On macOS autostart is an Aqua LaunchAgent, not a root daemon. Permit microphone use for dictation, system audio only for meetings that include it, and Accessibility only for optional synthetic paste. Don't assume a new or unsigned Nix build inherits an old macOS permission grant. Quit before switching generations while recording. Set `autoStart = false` to disable login startup; removing the service does not remove recordings.
+On Plasma the service belongs to the graphical systemd user session. On macOS autostart is an Aqua LaunchAgent, not a root daemon. Permit microphone use for dictation, system audio only for captures that include it, and Accessibility only for optional synthetic paste. Don't assume a new or unsigned Nix build inherits an old macOS permission grant. Quit before switching generations while recording. Set `autoStart = false` to disable login startup; removing the service does not remove recordings.

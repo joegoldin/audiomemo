@@ -90,6 +90,8 @@ func (d *Adapter) Caption(p sessiontypes.Preview) {
 	}
 	p.Stable = tail(p.Stable)
 	p.Tentative = tail(p.Tentative)
+	p.Us.Stable, p.Us.Tentative = tail(p.Us.Stable), tail(p.Us.Tentative)
+	p.Them.Stable, p.Them.Tentative = tail(p.Them.Stable), tail(p.Them.Tentative)
 	d.preview = p
 	d.wake()
 }
@@ -118,11 +120,13 @@ func (d *Adapter) wake() {
 }
 
 type viewStatus struct {
-	Capture string `json:"capture"`
-	Session string `json:"session"`
-	Started string `json:"started_utc"`
-	Job     string `json:"job_state"`
-	Warning bool   `json:"warning"`
+	QuickSession string `json:"quick_session,omitempty"`
+	QuickState   string `json:"quick_state,omitempty"`
+	Capture      string `json:"capture"`
+	Session      string `json:"session"`
+	Started      string `json:"started_utc"`
+	Job          string `json:"job_state"`
+	Warning      bool   `json:"warning"`
 }
 
 type copyCall struct {
@@ -353,7 +357,7 @@ func (d *Adapter) write(b *bridge, w io.Writer) {
 				Type    string               `json:"type"`
 				Status  viewStatus           `json:"status"`
 				Preview sessiontypes.Preview `json:"preview"`
-			}{"view", viewStatus{s.Capture, s.Session, s.StartedUTC, s.JobState, s.Warning != ""}, p}) {
+			}{"view", viewStatus{s.QuickSession, s.QuickState, s.Capture, s.Session, s.StartedUTC, s.JobState, s.Warning != ""}, p}) {
 				return
 			}
 		case note := <-b.notes:

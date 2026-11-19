@@ -1,6 +1,9 @@
 package cmd
 
 import (
+	"fmt"
+	"strings"
+
 	"github.com/joegoldin/audiomemo/internal/sessiontypes"
 	"github.com/spf13/cobra"
 )
@@ -20,9 +23,26 @@ func newDictateCommand() *cobra.Command {
 			},
 		}
 		if action == "start" || action == "toggle" {
-			control.Flags().StringVarP(&device, "device", "D", "", "microphone or alias")
+			control.Flags().StringVarP(&device, "device", "D", "", "microphone, alias, or input group")
 		}
 		command.AddCommand(control)
 	}
+	var copyResult bool
+	last := &cobra.Command{Use: "last", Short: "Print the last completed Quick Scribe transcript", Args: cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if copyResult {
+				_, err := desktopRequest(cmd, sessiontypes.Request{Action: "last.copy"})
+				return err
+			}
+			r, err := desktopRequest(cmd, sessiontypes.Request{Action: "last.text"})
+			if err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), strings.TrimRight(r.Text, "\n"))
+			return err
+		},
+	}
+	last.Flags().BoolVarP(&copyResult, "copy", "C", false, "copy the last transcript instead of printing it")
+	command.AddCommand(last)
 	return command
 }

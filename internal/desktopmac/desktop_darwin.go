@@ -52,6 +52,7 @@ type uiRun struct {
 	// Only touched by AppKit callbacks on the main thread.
 	menu    menuState
 	preview st.Preview
+	phase   string
 }
 
 var appMu sync.Mutex // NSApplication is process-wide.
@@ -220,15 +221,25 @@ func renderMenu(ui unsafe.Pointer, m menuState) {
 			return 0
 		}
 	}
-	C.am_ui_render(ui, title, status, warning, action(m.dictate), action(m.meeting), boolInt(m.cancel))
+	icon := C.int(C.AMTrayIdle)
+	switch m.icon {
+	case trayRecording:
+		icon = C.AMTrayRecording
+	case trayRefining:
+		icon = C.AMTrayRefining
+	}
+	C.am_ui_render(ui, title, status, warning, action(m.dictate), action(m.meeting), boolInt(m.cancel), icon)
 }
 
-func renderCaption(ui unsafe.Pointer, p st.Preview, meeting bool) {
-	session, stable, tentative := C.CString(p.Session), C.CString(shortText(p.Stable)), C.CString(shortText(p.Tentative))
-	defer C.free(unsafe.Pointer(session))
-	defer C.free(unsafe.Pointer(stable))
-	defer C.free(unsafe.Pointer(tentative))
-	C.am_ui_caption(ui, session, stable, tentative, boolInt(meeting))
+func renderCaption(ui unsafe.Pointer, p st.Preview, phase string) {
+	texts := []string{p.Session, phase, p.Stable, p.Tentative, p.Us.Stable, p.Us.Tentative, p.Them.Stable, p.Them.Tentative}
+	args := make([]*C.char, len(texts))
+	for i, text := range texts {
+		args[i] = C.CString(shortText(text))
+		defer C.free(unsafe.Pointer(args[i]))
+	}
+	C.am_ui_caption(ui, args[0], args[1], args[2], args[3], C.double(p.Level), boolInt(p.Split),
+		args[4], args[5], C.double(p.Us.Level), args[6], args[7], C.double(p.Them.Level))
 }
 
 //export amGoTick
@@ -254,9 +265,9 @@ render:
 		u.menu = menu
 		renderMenu(ui, menu)
 	}
-	if s.preview != u.preview {
-		u.preview = s.preview
-		renderCaption(ui, s.preview, s.status.Capture == "meeting")
+	if p, phase := s.overlay(time.Now()); p != u.preview || phase != u.phase {
+		u.preview, u.phase = p, phase
+		renderCaption(ui, p, phase)
 	}
 }
 

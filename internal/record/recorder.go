@@ -30,7 +30,7 @@ type RecordOpts struct {
 	Channels    int
 	OutputPath  string
 	LivePCM     bool
-	Roles       []string // optional parallel input roles; capture aligned Us/Them PCM in memory
+	Roles       []string // optional parallel input roles: LivePCM carries aligned Us/Them stereo
 
 	tapSampleRate int
 	tapChannels   int
@@ -55,7 +55,6 @@ type Recorder struct {
 	done      chan struct{} // closed when ffmpeg exits; safe for multiple waiters
 	exitErr   error
 	PCMReader io.ReadCloser
-	rolePCM   bytes.Buffer
 	nativeTap *systemAudioCapture
 	stopOnce  sync.Once
 	stopping  atomic.Bool
@@ -173,6 +172,9 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 		}
 	}
 	if len(opts.Roles) > 0 {
+		if !opts.LivePCM {
+			return nil, fmt.Errorf("Us/Them roles require a live PCM reader")
+		}
 		if len(opts.Roles) != n {
 			return nil, fmt.Errorf("expected one role per input")
 		}
@@ -189,7 +191,7 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 		"%samix=inputs=%d:duration=longest,asetnsamples=n=480,astats=metadata=1:reset=1,ametadata=print:file=/dev/stderr",
 		inputLabels, n,
 	)
-	if opts.LivePCM {
+	if opts.LivePCM && len(opts.Roles) == 0 {
 		filterGraph += ",asplit=2[a][b]"
 	} else {
 		filterGraph += "[a]"
@@ -212,9 +214,6 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 		args = append(args, "-f", "null")
 	}
 	args = append(args, "-y", opts.OutputPath)
-	if len(opts.Roles) > 0 {
-		args = append(args, "-map", "[roles]", "-f", "s16le", "-ar", "16000", "-ac", "2", "pipe:1")
-	}
 	return args, nil
 }
 
@@ -304,7 +303,11 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		if len(opts.Devices) > 1 {
 			mapLabel = "[b]"
 		}
-		args = appendPCMPipeArgs(args, 3+len(extraFiles), mapLabel)
+		if len(opts.Roles) > 0 {
+			args = append(args, "-map", "[roles]", "-f", "s16le", "-ar", "16000", "-ac", "2", fmt.Sprintf("pipe:%d", 3+len(extraFiles)))
+		} else {
+			args = appendPCMPipeArgs(args, 3+len(extraFiles), mapLabel)
+		}
 		extraFiles = append(extraFiles, pcmWriteEnd)
 	}
 
@@ -337,9 +340,6 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		expectedSources: expectedSources,
 	}
 
-	if len(opts.Roles) > 0 {
-		cmd.Stdout = &r.rolePCM
-	}
 	r.stopFn = r.Stop
 
 	threshold := opts.SilenceThreshold
@@ -623,6 +623,3 @@ func (r *Recorder) CloseCapture(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
-
-// RolePCM returns interleaved Us/Them samples once every output has drained.
-func (r *Recorder) RolePCM() []byte { <-r.done; return r.rolePCM.Bytes() }

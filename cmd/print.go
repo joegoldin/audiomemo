@@ -5,9 +5,7 @@ import (
 	"strings"
 )
 
-// printMode says what `record` writes to stdout. The historical behaviour is
-// printPath, which supports `transcribe $(record)`; printText is what makes
-// `record | copy` land the transcript in the clipboard rather than a filename.
+// printMode says what record and scribe write to stdout.
 type printMode string
 
 const (
@@ -36,18 +34,13 @@ func parsePrintMode(s string) (printMode, error) {
 	return "", fmt.Errorf("invalid --print %q: want auto, path, text, both, or none", s)
 }
 
-// resolvePrintMode turns auto into a concrete choice. A human watching a
-// terminal wants the path — it is the one piece of information the TUI did not
-// already show them. A pipe wants the words: nobody writes `record | copy` to
-// put a filename on the clipboard.
-//
-// Clips mode produces one recording per clip and prints a line per clip as it
-// goes, so auto stays on paths there rather than interleaving transcripts.
-func resolvePrintMode(mode printMode, stdoutIsTTY, clips bool) printMode {
+// Auto prints the transcript when there is one, on a terminal or in a pipe.
+// Clips produce one durable recording per clip and keep their path list.
+func resolvePrintMode(mode printMode, clips bool) printMode {
 	if mode != printAuto {
 		return mode
 	}
-	if stdoutIsTTY || clips {
+	if clips {
 		return printPath
 	}
 	return printText

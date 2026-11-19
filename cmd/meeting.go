@@ -29,7 +29,7 @@ func newMeetingCommand() *cobra.Command {
 		},
 	}
 	start.Flags().StringVarP(&device, "device", "D", "", "input group")
-	stop := &cobra.Command{Use: "stop", Short: "Stop the meeting and output its bundle path", Args: cobra.NoArgs,
+	stop := &cobra.Command{Use: "stop", Short: "Stop the meeting and print the final transcript", Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if print != "path" && print != "text" && print != "none" {
 				return fmt.Errorf("invalid --print %q: expected path, text, or none", print)
@@ -57,7 +57,7 @@ func newMeetingCommand() *cobra.Command {
 		},
 	}
 	stop.Flags().BoolVar(&wait, "wait", false, "wait for finalization of the stopped meeting")
-	stop.Flags().StringVar(&print, "print", "path", "output path, text (implies --wait), or none")
+	stop.Flags().StringVar(&print, "print", "text", "output text (implies --wait), path, or none")
 	retry := &cobra.Command{Use: "retry <bundle>", Short: "Queue finalization of a closed meeting bundle", Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			bundle, err := filepath.Abs(args[0])

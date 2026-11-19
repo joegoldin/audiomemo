@@ -10,13 +10,17 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"runtime"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/joegoldin/audiomemo/internal/config"
+	"github.com/joegoldin/audiomemo/internal/desktopmac"
 	"github.com/joegoldin/audiomemo/internal/record"
 	"github.com/joegoldin/audiomemo/internal/sessiontypes"
+	"github.com/joegoldin/audiomemo/internal/stream"
 	"github.com/joegoldin/audiomemo/internal/transcribe"
 )
 
@@ -73,7 +77,8 @@ type Session struct {
 	limit                           int
 	pcm                             bytes.Buffer // written by the single preview pump before capture closes
 	preview                         *transcribe.Streamer
-	uiDone                          chan struct{}
+	sides                           *transcribe.SidePreview
+	uiDone, uiStop                  chan struct{}
 	stopOnce, finalOnce, notifyOnce sync.Once
 	closeErr, finalErr              error
 	text                            string
@@ -107,51 +112,47 @@ func Start(ctx context.Context, c *config.Config, id, device string, caption fun
 	if err != nil {
 		return nil, err
 	}
-	name, err := mic(c, device, ds)
+	devices, roles, err := quickDevices(c, device, ds)
 	if err != nil {
 		return nil, err
 	}
-	view, err := transcribe.NewLiveStreamer(c, "nemo")
-	if err != nil {
-		return nil, err
+	if runtime.GOOS == "darwin" && slices.ContainsFunc(devices, func(device string) bool { return device != record.SystemAudioDevice }) {
+		if err := desktopmac.CheckMicrophonePermission(ctx); err != nil {
+			return nil, err
+		}
 	}
-	r, err := record.Start(record.RecordOpts{Device: name, Format: "wav", SampleRate: 16000, Channels: 1, OutputPath: os.DevNull, LivePCM: true, MaxDuration: 5 * time.Minute})
+	r, err := record.Start(record.RecordOpts{Devices: devices, Roles: roles,
+		Format: "wav", SampleRate: 16000, Channels: 1, OutputPath: os.DevNull, LivePCM: true, MaxDuration: 5 * time.Minute})
 	if err != nil {
-		return nil, err
+		return nil, desktopmac.DescribeSystemAudioError(err)
 	}
 	s := newSession(ctx, r.PCMReader, r.CloseCapture, func(ctx context.Context, b []byte) (string, error) {
-		res, e := transcribe.NewNemo(c.Transcribe.Nemo).TranscribePCM(ctx, b, 16000, transcribe.TranscribeOpts{Language: c.Transcribe.Language})
+		nemo := transcribe.NewNemo(c.Transcribe.Nemo)
+		if len(roles) > 0 {
+			return nemo.TranscribeSides(ctx, b, c.Transcribe.Language)
+		}
+		res, e := nemo.TranscribePCM(ctx, b, 16000, transcribe.TranscribeOpts{Language: c.Transcribe.Language})
 		if e != nil {
 			return "", e
 		}
 		return res.Text, nil
 	}, finish, sessiontypes.QuickPCMBytes)
-	s.preview = view
-	s.uiDone = make(chan struct{})
-	if err = view.StartMemory(s.ctx, s.feed); err != nil {
-		s.preview = nil
+	if len(roles) > 0 {
+		s.sides, err = transcribe.StartSidePreview(s.ctx, c, "nemo", r.PCMReader, true)
+	} else {
+		s.preview, err = transcribe.NewLiveStreamer(c, "nemo")
+		if err == nil {
+			err = s.preview.StartMemory(s.ctx, s.feed)
+		}
+	}
+	if err != nil {
+		_ = s.source.Close()
 		s.Cancel()
 		return nil, err
 	}
-	go func() {
-		defer close(s.uiDone)
-		for {
-			select {
-			case <-s.ctx.Done():
-				return
-			case p, ok := <-view.Partial:
-				if !ok {
-					return
-				}
-				caption(sessiontypes.Preview{Session: id, Stable: view.FullText(), Tentative: p})
-			case _, ok := <-view.Committed:
-				if !ok {
-					return
-				}
-				caption(sessiontypes.Preview{Session: id, Stable: view.FullText()})
-			}
-		}
-	}()
+	s.uiDone, s.uiStop = make(chan struct{}), make(chan struct{})
+	go s.captions(id, r.Level, caption)
+
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -166,6 +167,72 @@ func Start(ctx context.Context, c *config.Config, id, device string, caption fun
 	}()
 	return s, nil
 }
+
+// Implicit single-device dictation stays microphone-only. Explicit device
+// and group selections may include system audio.
+func quickDevices(c *config.Config, selected string, ds []record.Device) ([]string, []string, error) {
+	implicit := selected == ""
+	if implicit {
+		selected = c.Desktop.DictationMic
+		if selected == "" {
+			selected = c.Record.Device
+		}
+	}
+	if _, group := c.DeviceGroups[selected]; implicit && !group {
+		name, err := mic(c, selected, ds)
+		return []string{name}, nil, err
+	}
+	sources, err := record.ResolveSources(c, selected, ds)
+	if err != nil {
+		return nil, nil, err
+	}
+	devices := make([]string, 0, len(sources))
+	for _, source := range sources {
+		devices = append(devices, source.Device)
+	}
+	roles, err := record.RecordingRoles(c, devices, ds)
+	return devices, roles, err
+}
+
+func (s *Session) captions(id string, levels <-chan float64, caption func(sessiontypes.Preview)) {
+	defer close(s.uiDone)
+	tick := time.NewTicker(64 * time.Millisecond)
+	defer tick.Stop()
+	var level float64
+	var lastAudio time.Time
+	var last sessiontypes.Preview
+	for {
+		select {
+		case <-s.uiStop:
+			return
+		case reading, ok := <-levels:
+			if !ok {
+				levels = nil
+			} else {
+				level = max(level, stream.NormalizeLevel(reading))
+				lastAudio = time.Now()
+			}
+		case <-tick.C:
+			p := sessiontypes.Preview{Session: id}
+			if s.sides != nil {
+				p = s.sides.Snapshot()
+				p.Session = id
+			} else {
+				if time.Since(lastAudio) > 200*time.Millisecond {
+					level = 0
+				}
+				lane := s.preview.Caption(level)
+				p.Stable, p.Tentative, p.Level = lane.Stable, lane.Tentative, lane.Level
+				level *= 0.75
+			}
+			if p != last {
+				caption(p)
+				last = p
+			}
+		}
+	}
+}
+
 func (s *Session) CloseCapture(ctx context.Context) error {
 	s.stopOnce.Do(func() {
 		deadline, cancel := context.WithTimeout(ctx, 5*time.Second)
@@ -174,15 +241,24 @@ func (s *Session) CloseCapture(ctx context.Context) error {
 		if s.closeErr != nil {
 			_ = s.source.Close()
 		}
-		if s.preview != nil {
-			s.preview.Stop()
+		if s.uiDone != nil {
+			close(s.uiStop)
 			<-s.uiDone
+		}
+		if s.sides != nil {
+			s.sides.Stop()
+		} else if s.preview != nil {
+			s.preview.Stop()
 		}
 		_ = s.source.Close()
 	})
 	return s.closeErr
 }
-func (s *Session) Cancel() { s.cancel(); _ = s.CloseCapture(context.Background()) }
+func (s *Session) Cancel() {
+	s.cancel()
+	_ = s.source.Close()
+	_ = s.CloseCapture(context.Background())
+}
 func (s *Session) Stop(ctx context.Context) (string, error) {
 	s.finalOnce.Do(func() {
 		err := s.CloseCapture(ctx)
@@ -192,6 +268,14 @@ func (s *Session) Stop(ctx context.Context) (string, error) {
 			return
 		}
 		b := s.pcm.Bytes()
+		if s.sides != nil {
+			var readErr error
+			b, readErr = s.sides.PCM()
+			if readErr != nil {
+				s.finalErr = readErr
+				return
+			}
+		}
 		if len(b) < 2 || bytes.Count(b, []byte{0}) == len(b) {
 			s.finalErr = errors.New("no speech captured")
 			return

@@ -13,8 +13,8 @@ func TestScribeRoleGraphPreservesChannelsAndLongerSide(t *testing.T) {
 		t.Skip("ffmpeg unavailable")
 	}
 	cfg := config.Default()
-	ds := []Device{{Name: "local", IsDefault: true}, {Name: "remote", IsMonitor: true}}
-	roles, e := RecordingRoles(cfg, []string{"remote", "local"}, ds)
+	ds := []Device{{Name: "local", IsDefault: true}, {Name: "remote", IsMonitor: true}, {Name: "other", IsMonitor: true}}
+	roles, e := RecordingRoles(cfg, []string{"remote", "local", "other"}, ds)
 	if e != nil {
 		t.Fatal(e)
 	}
@@ -22,7 +22,7 @@ func TestScribeRoleGraphPreservesChannelsAndLongerSide(t *testing.T) {
 	if e != nil {
 		t.Fatal(e)
 	}
-	args := []string{"-v", "error", "-f", "lavfi", "-i", "aevalsrc=0.5:s=16000:d=0.1", "-f", "lavfi", "-i", "aevalsrc=-0.25:s=16000:d=0.2", "-filter_complex", g + m + "amix=inputs=2,anullsink", "-map", "[roles]", "-f", "s16le", "pipe:1"}
+	args := []string{"-v", "error", "-f", "lavfi", "-i", "aevalsrc=0.5:s=16000:d=0.1", "-f", "lavfi", "-i", "aevalsrc=-0.25:s=16000:d=0.2", "-f", "lavfi", "-i", "aevalsrc=-0.25:s=16000:d=0.15", "-filter_complex", g + m + "amix=inputs=3,anullsink", "-map", "[roles]", "-f", "s16le", "pipe:1"}
 	pcm, e := exec.Command(ff, args...).Output()
 	if e != nil {
 		t.Fatal(e)
@@ -30,10 +30,10 @@ func TestScribeRoleGraphPreservesChannelsAndLongerSide(t *testing.T) {
 	if len(pcm) != 3200*4 {
 		t.Fatal(len(pcm))
 	}
-	for _, i := range []int{400, 2400} {
+	for _, i := range []int{400, 2000, 2600} {
 		us := int16(binary.LittleEndian.Uint16(pcm[4*i:]))
 		them := int16(binary.LittleEndian.Uint16(pcm[4*i+2:]))
-		if us >= 0 || i == 400 && them <= 0 || i == 2400 && them != 0 {
+		if us >= 0 || i == 400 && (them <= 3900 || them >= 4300) || i == 2000 && them >= 0 || i == 2600 && them != 0 {
 			t.Fatalf("frame %d: %d/%d", i, us, them)
 		}
 	}

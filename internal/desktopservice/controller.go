@@ -5,6 +5,7 @@ package desktopservice
 import (
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -101,6 +102,7 @@ type controller struct {
 	warning         string
 	lastText        string
 	latestQuick     string
+	quickOutcome    string
 
 	jobs       chan *job
 	workerDone chan struct{}
@@ -138,9 +140,19 @@ func newController(ctx context.Context, opts Options) *controller {
 }
 
 func (c *controller) statusLocked() st.Status {
-	s := st.Status{Capture: "idle", Job: c.recentJob, JobState: c.recentState, Warning: c.warning}
+	s := st.Status{QuickSession: c.latestQuick, QuickState: c.quickOutcome, Capture: "idle", Job: c.recentJob, JobState: c.recentState, Warning: c.warning}
 	if cap := c.capture; cap != nil {
 		s.Capture, s.Session, s.StartedUTC, s.Warning = cap.phase, cap.id, cap.started, cap.warning
+		if cap.kind == "dictating" {
+			switch cap.phase {
+			case "starting":
+				s.QuickState = "starting"
+			case "dictating":
+				s.QuickState = "recording"
+			case "stopping":
+				s.QuickState = "finalizing"
+			}
+		}
 	}
 	if len(c.pending) > 0 {
 		s.Job, s.JobState = c.pending[0].id, c.pending[0].state
@@ -174,7 +186,7 @@ func (c *controller) setCaptureLocked(cap *capture) {
 func (c *controller) publish(id string, p st.Preview) {
 	// Preview is opt-in and lossy. In particular, do not let an old producer
 	// erase the current caption when its asynchronous inference call returns.
-	if c.opts.Desktop == nil || len(p.Stable)+len(p.Tentative) > st.MaxFrame {
+	if c.opts.Desktop == nil || len(p.Stable)+len(p.Tentative)+len(p.Us.Stable)+len(p.Us.Tentative)+len(p.Them.Stable)+len(p.Them.Tentative) > st.MaxFrame {
 		return
 	}
 	c.mu.Lock()
@@ -218,7 +230,7 @@ func validateRequest(r st.Request) (ErrorCode, string) {
 		return ErrVersion, fmt.Sprintf("server uses protocol version %d", st.Version)
 	}
 	switch r.Action {
-	case "status", "quit", "last.copy", "dictate.start", "dictate.stop", "dictate.toggle", "dictate.cancel", "meeting.start", "meeting.stop", "meeting.retry":
+	case "status", "quit", "last.copy", "last.text", "dictate.start", "dictate.stop", "dictate.toggle", "dictate.cancel", "meeting.start", "meeting.stop", "meeting.retry":
 	default:
 		return ErrRequest, "unknown action"
 	}
@@ -314,6 +326,8 @@ func (c *controller) action(ctx context.Context, r st.Request) (st.Reply, *job) 
 		return c.retry(cap, r.Bundle), nil
 	case "last.copy":
 		return c.copyLast(), nil
+	case "last.text":
+		return c.lastResult(), nil
 	default:
 		return c.reply("", "", "", ErrRequest, "unknown action"), nil
 	}
@@ -343,6 +357,9 @@ func (c *controller) start(kind, device string) st.Reply {
 	cap := &capture{id: rand.Text(), kind: kind, phase: "starting", started: time.Now().UTC().Format(time.RFC3339Nano), cancel: cancel}
 	c.mu.Lock()
 	c.warning = ""
+	if kind == "dictating" {
+		c.latestQuick, c.quickOutcome = cap.id, ""
+	}
 	c.setCaptureLocked(cap)
 	c.mu.Unlock()
 	abortStart := context.AfterFunc(c.ctx, cancel)
@@ -374,6 +391,9 @@ func (c *controller) start(kind, device string) st.Reply {
 		cancel()
 		c.mu.Lock()
 		c.warning = err.Error()
+		if kind == "dictating" {
+			c.quickOutcome = "failed"
+		}
 		c.setCaptureLocked(nil)
 		c.mu.Unlock()
 		return c.reply("", "", "", ErrCapture, err.Error())
@@ -382,9 +402,6 @@ func (c *controller) start(kind, device string) st.Reply {
 	c.mu.Lock()
 	if !observesMeeting {
 		cap.phase = kind
-	}
-	if kind == "dictating" {
-		c.latestQuick = cap.id
 	}
 	c.changedLocked()
 	c.mu.Unlock()
@@ -497,6 +514,9 @@ func (c *controller) stopQuick(cap *capture, reason string) (st.Reply, *job) {
 			j.cancel()
 			cap.cancel()
 			cap.quick.Cancel()
+			c.mu.Lock()
+			c.quickOutcome = "failed"
+			c.mu.Unlock()
 			c.clearCapture(cap, err.Error())
 			return c.reply(cap.id, "", "", ErrCapture, err.Error()), nil
 		}
@@ -517,6 +537,9 @@ func (c *controller) cancelQuick(cap *capture, id string) st.Reply {
 			c.stopping(cap, "")
 			cap.cancel()
 			cap.quick.Cancel()
+			c.mu.Lock()
+			c.quickOutcome = "canceled"
+			c.mu.Unlock()
 			c.clearCapture(cap, "")
 			return c.reply(cap.id, "", "", "", "")
 		}
@@ -646,19 +669,27 @@ func (c *controller) retry(cap *capture, bundle string) st.Reply {
 	return c.reply(j.id, canonical, "", "", "")
 }
 
-func (c *controller) copyLast() st.Reply {
-	if c.opts.Desktop == nil {
-		return c.reply("", "", "", ErrUnavailable, "no desktop clipboard adapter")
-	}
+func (c *controller) lastResult() st.Reply {
 	c.mu.Lock()
 	text := c.lastText
 	c.mu.Unlock()
 	if text == "" {
-		return c.reply("", "", "", ErrNoResult, "no saved dictation result")
+		return c.reply("", "", "", ErrNoResult, "no completed dictation result in this daemon session")
+	}
+	return c.reply("", "", text, "", "")
+}
+
+func (c *controller) copyLast() st.Reply {
+	if c.opts.Desktop == nil {
+		return c.reply("", "", "", ErrUnavailable, "no desktop clipboard adapter")
+	}
+	last := c.lastResult()
+	if last.Error != "" {
+		return last
 	}
 	ctx, cancel := context.WithTimeout(c.ctx, stopTimeout)
 	defer cancel()
-	if err := c.opts.Desktop.Deliver(ctx, text, "", false); err != nil {
+	if err := c.opts.Desktop.Deliver(ctx, last.Text, "", false); err != nil {
 		return c.reply("", "", "", ErrDelivery, err.Error())
 	}
 	return c.reply("", "", "", "", "")
@@ -672,6 +703,9 @@ func (c *controller) newJob(captureID, bundle string) *job {
 func (c *controller) enqueue(j *job, cap *capture, warning string) {
 	c.mu.Lock()
 	c.pending = append(c.pending, j)
+	if j.quick != nil {
+		c.quickOutcome = "finalizing"
+	}
 	if cap != nil && c.capture == cap {
 		c.warning = warning
 		c.setCaptureLocked(nil)
@@ -708,6 +742,18 @@ func (c *controller) work() {
 			c.recentState = "canceled"
 		default:
 			c.recentState = "failed"
+		}
+		if j.quick != nil && j.captureID == c.latestQuick {
+			switch j.code {
+			case "":
+				c.quickOutcome = "copied"
+			case ErrDelivery:
+				c.quickOutcome = "ready"
+			case ErrCanceled:
+				c.quickOutcome = "canceled"
+			default:
+				c.quickOutcome = "failed"
+			}
 		}
 		if j.detail != "" && c.capture == nil {
 			c.warning = j.detail
@@ -755,12 +801,20 @@ func (c *controller) runJob(j *job) {
 		}
 		return
 	}
-	if strings.TrimSpace(text) != "" {
-		c.deliverQuick(j, text)
+	if strings.TrimSpace(text) == "" {
+		j.code, j.detail = ErrFinalize, "no speech captured"
+		return
 	}
+	c.deliverQuick(j, text)
 }
 
 func (c *controller) deliverQuick(j *job, text string) {
+	// Bound the encoded IPC result, not just the unescaped text.
+	encoded, err := json.Marshal(text)
+	if err != nil || len(encoded) >= st.MaxFrame-4096 {
+		j.code, j.detail = ErrFinalize, "dictation text exceeds the result limit"
+		return
+	}
 	c.mu.Lock()
 	if j.ctx.Err() != nil {
 		c.mu.Unlock()
@@ -768,14 +822,11 @@ func (c *controller) deliverQuick(j *job, text string) {
 		return
 	}
 	j.deliveryStarted = true
+	c.lastText = text
 	paste := c.opts.Paste && c.latestQuick == j.captureID && c.capture == nil && j.target != ""
 	c.mu.Unlock()
 	if c.opts.Desktop == nil {
 		j.code, j.detail = ErrDelivery, "dictation finished without a desktop clipboard adapter"
-		return
-	}
-	if len(text) >= st.MaxFrame {
-		j.code, j.detail = ErrDelivery, "dictation text exceeds the clipboard limit"
 		return
 	}
 	ctx, cancel := context.WithTimeout(j.ctx, stopTimeout)
@@ -793,13 +844,6 @@ func (c *controller) deliverQuick(j *job, text string) {
 	} else if c.opts.Paste && !paste {
 		j.detail = "copied, not pasted: original focus cannot be verified"
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if j.ctx.Err() != nil {
-		j.code = ErrCanceled
-		return
-	}
-	c.lastText = text
 }
 
 func (c *controller) shutdown() error {

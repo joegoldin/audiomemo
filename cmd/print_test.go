@@ -50,27 +50,23 @@ func TestParsePrintMode(t *testing.T) {
 
 func TestResolvePrintMode(t *testing.T) {
 	tests := []struct {
-		name        string
-		mode        printMode
-		stdoutIsTTY bool
-		clips       bool
-		want        printMode
+		name  string
+		mode  printMode
+		clips bool
+		want  printMode
 	}{
-		{name: "auto on a terminal prints the path", mode: printAuto, stdoutIsTTY: true, want: printPath},
-		{name: "auto down a pipe prints the transcript", mode: printAuto, want: printText},
+		{name: "auto on a terminal prints the transcript", mode: printAuto, want: printText},
 		{name: "auto in clips mode prints paths even piped", mode: printAuto, clips: true, want: printPath},
-		{name: "auto in clips mode on a terminal prints paths", mode: printAuto, stdoutIsTTY: true, clips: true, want: printPath},
 		{name: "explicit path is honoured down a pipe", mode: printPath, want: printPath},
-		{name: "explicit text is honoured on a terminal", mode: printText, stdoutIsTTY: true, want: printText},
+		{name: "explicit text is honoured on a terminal", mode: printText, want: printText},
 		{name: "both is unchanged", mode: printBoth, want: printBoth},
-		{name: "none is unchanged", mode: printNone, stdoutIsTTY: true, want: printNone},
+		{name: "none is unchanged", mode: printNone, want: printNone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := resolvePrintMode(tt.mode, tt.stdoutIsTTY, tt.clips)
+			got := resolvePrintMode(tt.mode, tt.clips)
 			if got != tt.want {
-				t.Errorf("resolvePrintMode(%q, tty=%v, clips=%v) = %q, want %q",
-					tt.mode, tt.stdoutIsTTY, tt.clips, got, tt.want)
+				t.Errorf("resolvePrintMode(%q, clips=%v) = %q, want %q", tt.mode, tt.clips, got, tt.want)
 			}
 		})
 	}

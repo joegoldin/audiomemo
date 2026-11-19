@@ -19,7 +19,6 @@ import (
 	"github.com/joegoldin/audiomemo/internal/stream"
 	"github.com/joegoldin/audiomemo/internal/transcribe"
 	"github.com/joegoldin/audiomemo/internal/tui"
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 	"github.com/spf13/pflag"
 )
@@ -208,7 +207,7 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	stdoutMode := resolvePrintMode(printFlag, isatty.IsTerminal(os.Stdout.Fd()), rClips)
+	stdoutMode := resolvePrintMode(printFlag, rClips)
 	if rStream {
 		// The NDJSON stream owns stdout; the transcript rides the final event.
 		stdoutMode = printNone
@@ -340,7 +339,9 @@ func runRecord(cmd *cobra.Command, args []string) error {
 	// Now that it is settled whether live text will arrive, --print text can
 	// be honoured: with no live transcript to fall back on, the batch pass is
 	// the only thing that can produce the words the user asked for.
-	shouldTranscribe = batchNeededForText(stdoutMode, streamer != nil, shouldTranscribe)
+	if printFlag != printAuto || !liveDisabled {
+		shouldTranscribe = batchNeededForText(stdoutMode, streamer != nil, shouldTranscribe)
+	}
 
 	var model *tui.Model
 	if rStream {
@@ -427,9 +428,6 @@ func runRecord(cmd *cobra.Command, args []string) error {
 		// Batch transcribe overwrites the promoted live transcript at
 		// <base>.txt with the diarized full result. The live preview is
 		// preserved at <base>-live.txt.
-		if stdoutMode == printPath {
-			return runPostTranscribe(outputPath, false)
-		}
 		text, _, err := runPostTranscribeCapture(outputPath, wantsStdoutText(stdoutMode))
 		if err != nil {
 			return err
@@ -593,7 +591,7 @@ func runClips(cfg *config.Config, name, format string, sampleRate, channels int,
 
 		if model.ShouldTranscribe() {
 			for _, path := range savedPaths {
-				if err := runPostTranscribe(path, false); err != nil {
+				if _, _, err := runPostTranscribeCapture(path, false); err != nil {
 					fmt.Fprintf(os.Stderr, "transcribe %s: %v\n", path, err)
 				}
 			}
@@ -627,16 +625,6 @@ func newPostTranscribeCmd(audioPath string, plainText bool) (*exec.Cmd, []string
 		args = append([]string{"--config", rConfig}, args...)
 	}
 	return exec.Command(self, append([]string{"transcribe"}, args...)...), args, nil
-}
-
-func runPostTranscribe(audioPath string, plainText bool) error {
-	cmd, _, err := newPostTranscribeCmd(audioPath, plainText)
-	if err != nil {
-		return err
-	}
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
 }
 
 // runPostTranscribeCapture runs the same batch pass with stdout captured, for

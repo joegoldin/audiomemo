@@ -44,9 +44,10 @@ runs local live NeMo, keeps the transcript and writes no audio file. Its
 .B \-r
 option discards audio after live recognition. Cloud fallback for scribe requires
 .BR \-\-cloud .
-With a device group containing both Us and Them, scribe retains the two sides
-in memory and runs a local source-labelled final pass automatically. Its live
-preview remains mixed. A single side, or live-only mode, does not add side labels.
+A group with both Us and Them produces two live transcripts. All Them inputs
+are mixed into that one side. The local final pass runs automatically unless
+.B \-r
+was specified, and puts both sides in time order. One-sided capture stays unlabeled.
 Ordinary recording and transcription honor the configured backend: auto with an ElevenLabs key can upload audio if local inference fails. Use
 .B transcribe \-\-backend nemo
 for strictly local file transcription. On macOS
@@ -54,15 +55,25 @@ for strictly local file transcription. On macOS
 selects a downloaded Voice Memo.
 .SH DESKTOP DICTATION
 .B dictate toggle
-starts a microphone-only capture or finishes the current dictation. Start and stop can be bound separately; cancel discards without copy or paste. A click-through caption shows provisional text when the desktop supports it. No audio or transcript file is created. Final text is copied by default; paste is opt-in and must fall back to copy when focus is uncertain. A clipboard manager or receiving application can preserve the result. The five-minute PCM limit ends a clip; no microphone is held between sessions. Starting dictation must not displace a meeting.
+starts the configured microphone or finishes the current dictation. Pass
+.B \-D group
+for a device group. A click-through caption shows live text and meters, then
+indicates the final pass. Cancel discards without copy or paste. No audio or
+transcript file is created. Final text is copied by default; paste is opt-in.
+.B dictate last
+prints the last completed transcript from the running daemon, even if copying
+failed. Add
+.B \-\-copy
+to retry copying. The five-minute limit ends a clip automatically.
 .SH MEETINGS
 .B meeting start \-D group
 starts capture and prints its ID. Use a configured meeting device or group to avoid selecting one each time. The recording indicator and status distinguish capture from finalization.
 .B meeting stop
-closes the inputs and prints the bundle path. It does not wait for model inference.
-.B meeting stop \-\-print text
-waits for the final result and prints only text. To wait but keep the path output, use
-.BR \-\-wait .
+closes the inputs, waits for the final pass, and prints only the transcript.
+.B meeting stop \-\-print path
+prints the bundle path without waiting unless
+.B \-\-wait
+is also set.
 .B meeting retry
 .I bundle
 retries failed derived output in a closed bundle under the configured meetings root. Never delete originals to retry. Meetings do not fall back to a cloud provider.
@@ -74,7 +85,7 @@ Each input keeps its own track. Times and gaps refer to the same meeting timelin
 sets or resets an endpoint override. In the device manager use the role key to cycle assignments. An explicit role wins; monitors and system audio default to Them; the configured default mic defaults to Us. If the default is a group or no usable default mic exists, the OS default mic is Us when known. Other devices are Them. A group never confers its own role on all members.
 .SH OUTPUT AND SIGNALS
 .B record \-\-print
-accepts auto, path, text, both, or none. Auto prints a path to a terminal and text to a pipe. Diagnostics go to stderr. With
+accepts auto, path, text, both, or none. Auto prints the transcript to a terminal or pipe, and nothing if no transcript is produced. Use path explicitly to print the saved artifact. Diagnostics go to stderr. With
 .B record \-\-stream
 stdout is exclusively newline-delimited JSON: start, level, partial, commit, final, error, end. A partial replaces the previous partial; it must not be appended as a new sentence. Commands intended to be piped never emit desktop messages on stdout. SIGINT/SIGTERM end an unattended recording; interrupting a waiting meeting client does not end another session. Stopping the daemon closes capture and preserves meeting originals. A failed command exits nonzero.
 .SH FILES

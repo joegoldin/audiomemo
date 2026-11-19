@@ -73,13 +73,18 @@ func (r deliveryResult) outcome() (copied bool, err error) {
 }
 
 type viewState struct {
-	status  st.Status
-	preview st.Preview
-	notice  string
+	status     st.Status
+	preview    st.Preview
+	notice     string
+	phaseSince time.Time
 }
 
 func (s *viewState) update(status st.Status) {
-	if !hasCaption(status.Capture) || status.Capture != s.status.Capture || status.Session != s.status.Session {
+	if status.QuickSession != s.status.QuickSession || status.QuickState != s.status.QuickState {
+		s.phaseSince = time.Now()
+	}
+	keepQuick := status.QuickState == "finalizing" && status.QuickSession != "" && status.QuickSession == s.preview.Session
+	if !keepQuick && (!hasCaption(status.Capture) || status.Capture != s.status.Capture || status.Session != s.status.Session) {
 		s.preview = st.Preview{}
 	}
 	if status.Session != s.status.Session {
@@ -94,11 +99,53 @@ func (s *viewState) caption(p st.Preview) {
 	}
 }
 
+func (s viewState) overlay(now time.Time) (st.Preview, string) {
+	if s.status.Capture == "meeting" {
+		p := s.preview
+		p.Session = s.status.Session
+		return p, "meeting"
+	}
+	state, id := s.status.QuickState, s.status.QuickSession
+	switch state {
+	case "copied", "ready", "failed":
+		if now.Sub(s.phaseSince) < 4200*time.Millisecond {
+			return st.Preview{Session: id}, state
+		}
+	case "starting", "recording", "finalizing":
+		p := s.preview
+		if p.Session != id {
+			p = st.Preview{Session: id}
+		}
+		return p, state
+	}
+	return st.Preview{}, ""
+}
+
 func hasCaption(capture string) bool {
 	return capture == "dictating" || capture == "meeting"
 }
 
+type trayIcon int
+
+const (
+	trayIdle trayIcon = iota
+	trayRecording
+	trayRefining
+)
+
+func (s viewState) trayIcon() trayIcon {
+	switch {
+	case s.status.Capture == "dictating" || s.status.Capture == "meeting":
+		return trayRecording
+	case s.status.QuickState == "finalizing":
+		return trayRefining
+	default:
+		return trayIdle
+	}
+}
+
 type menuState struct {
+	icon    trayIcon
 	title   string
 	status  string
 	warning string
@@ -108,7 +155,7 @@ type menuState struct {
 }
 
 func (s viewState) render(now time.Time) menuState {
-	v := menuState{title: "AudioMemo", status: "Ready", warning: s.status.Warning}
+	v := menuState{icon: s.trayIcon(), title: "AudioMemo", status: "Ready", warning: s.status.Warning}
 	switch s.status.Capture {
 	case "dictating", "meeting":
 		started, err := time.Parse(time.RFC3339Nano, s.status.StartedUTC)

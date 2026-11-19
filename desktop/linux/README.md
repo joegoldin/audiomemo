@@ -27,13 +27,15 @@ daemon for its normal recoverable shutdown.
 - On KWin, the caption is a layer-shell surface with no input region or keyboard
   interactivity. It uses a bottom margin and does not reserve screen space. Its
   logical-pixel size fits the smallest advertised output. KWin chooses the active
-  output when the capture first becomes ready, **not** the screen at the precise
+  output when capture is admitted, **not** the screen at the precise
   time of a separate CLI shortcut event. No pointer polling, X11 window hack or
   focusable popup is used. Stable text and tentative revisions are styled
   separately; the latest session-matching snapshot replaces the previous one.
 - With no usable layer-shell plugin/protocol, captions are disabled, not moved
-  into a regular window. On session lock, stop or session change, the overlay
-  disappears. An overlay dismissed with its output or by lock is not remapped on
+  into a regular window. On session lock or session change, the overlay disappears. Quick Scribe
+  stays visible through final transcription with a progress animation, then
+  reports the copy result briefly. During capture, the input meters follow
+  the audio, with separate Us and Them lanes for a mixed-role group. An overlay dismissed with its output or by lock is not remapped on
   another display for the same capture.
 - When available, clipboard delivery uses `ext_data_control_manager_v1` on the
   unambiguous Wayland seat. Copy changes only the regular clipboard. The helper

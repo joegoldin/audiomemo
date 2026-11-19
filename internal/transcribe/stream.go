@@ -50,6 +50,7 @@ type Streamer struct {
 	reader    io.Reader
 	mu        sync.Mutex
 	committed []string
+	draft     string
 	writer    *bufio.Writer
 	file      *os.File
 	once      sync.Once
@@ -401,6 +402,9 @@ func (s *Streamer) report(ch chan error, err error) {
 	}
 }
 func (s *Streamer) partial(text string) {
+	s.mu.Lock()
+	s.draft = text
+	s.mu.Unlock()
 	select {
 	case s.Partial <- text:
 	default:
@@ -413,6 +417,7 @@ func (s *Streamer) commit(text string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.committed = append(s.committed, text)
+	s.draft = ""
 	if _, err := fmt.Fprintln(s.writer, text); err != nil {
 		return err
 	}

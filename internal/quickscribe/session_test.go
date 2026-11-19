@@ -8,6 +8,7 @@ import (
 	"github.com/joegoldin/audiomemo/internal/record"
 	"github.com/joegoldin/audiomemo/internal/sessiontypes"
 	"io"
+	"slices"
 	"testing"
 	"time"
 )
@@ -98,5 +99,28 @@ func TestFailedFinalDoesNotReturnPartialText(t *testing.T) {
 	text, err := s.Stop(t.Context())
 	if text != "" || !errors.Is(err, fail) {
 		t.Fatalf("returned text=%t error=%v", text != "", err)
+	}
+}
+
+func TestQuickGroupPreservesOnlyTwoSides(t *testing.T) {
+	c := config.Default()
+	c.Desktop.DictationMic = "local"
+	c.Record.Device = "local"
+	c.Devices = map[string]string{"mic": "local", "speaker": "remote.monitor", "monitor": "other.monitor"}
+	c.DeviceGroups["call"] = []string{"speaker", "mic", "monitor"}
+	c.DeviceGroups["remote"] = []string{"speaker", "monitor"}
+	ds := []record.Device{{Name: "local", IsDefault: true}, {Name: "remote.monitor", IsMonitor: true}, {Name: "other.monitor", IsMonitor: true}}
+	devices, roles, err := quickDevices(c, "call", ds)
+	if err != nil || !slices.Equal(devices, []string{"remote.monitor", "local", "other.monitor"}) || !slices.Equal(roles, []string{"them", "us", "them"}) {
+		t.Fatalf("mixed group: %v %v %v", devices, roles, err)
+	}
+	if devices, roles, err := quickDevices(c, "remote", ds); err != nil || len(devices) != 2 || roles != nil {
+		t.Fatalf("one-sided group: %v %v %v", devices, roles, err)
+	}
+	if devices, roles, err := quickDevices(c, "speaker", ds); err != nil || !slices.Equal(devices, []string{"remote.monitor"}) || roles != nil {
+		t.Fatalf("explicit system audio: %v %v %v", devices, roles, err)
+	}
+	if devices, roles, err := quickDevices(c, "", ds); err != nil || !slices.Equal(devices, []string{"local"}) || roles != nil {
+		t.Fatalf("implicit microphone: %v %v %v", devices, roles, err)
 	}
 }

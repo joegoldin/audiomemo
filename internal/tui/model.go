@@ -44,6 +44,7 @@ type Model struct {
 	width         int
 	height        int
 	streamer      *transcribe.Streamer
+	sides         *transcribe.SidePreview
 	transcript    TranscriptViewport
 	streamWarning error
 	streamErr     error
@@ -141,6 +142,8 @@ func (m *Model) SetOutLabel(label string) {
 func (m *Model) DisableBatch() {
 	m.noBatch = true
 }
+
+func (m *Model) SetSidePreview(p *transcribe.SidePreview) { m.sides = p }
 
 func (m *Model) Init() tea.Cmd {
 	cmds := []tea.Cmd{tickCmd()}
@@ -433,7 +436,22 @@ func (m *Model) View() string {
 	if savedLine != "" {
 		parts = append(parts, savedLine)
 	}
-	parts = append(parts, sep, m.transcript.View())
+	if m.sides == nil {
+		parts = append(parts, sep, m.transcript.View())
+	} else {
+		p := m.sides.Snapshot()
+		for i, lane := range []string{p.Us.Stable + " " + p.Us.Tentative, p.Them.Stable + " " + p.Them.Tentative} {
+			level := []float64{p.Us.Level, p.Them.Level}[i]
+			text := []rune(strings.TrimSpace(lane))
+			if len(text) == 0 {
+				text = []rune("Listening…")
+			}
+			if len(text) > 180 {
+				text = append([]rune("…"), text[len(text)-180:]...)
+			}
+			parts = append(parts, sep, infoStyle.Render("  "+[]string{"Us", "Them"}[i]+" "+renderVUCursor(level, m.muted)), lipgloss.NewStyle().Width(max(1, m.width-4)).Render(string(text)))
+		}
+	}
 	if m.streamErr != nil {
 		parts = append(parts, streamErrStyle.Render(fmt.Sprintf("  ⚠ live transcription stopped: %v", m.streamErr)))
 	} else if m.streamWarning != nil {

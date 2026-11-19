@@ -30,21 +30,23 @@ static BOOL isConsoleSession(NSDictionary *info) {
 
 @interface AMCaptionView : NSView
 @property(nonatomic, copy) NSAttributedString *caption;
+@property(nonatomic, copy) NSAttributedString *remoteCaption;
+@property(nonatomic, copy) NSString *phase;
+@property(nonatomic) BOOL split;
+@property(nonatomic) double level;
+@property(nonatomic) double remoteLevel;
 @end
 @implementation AMCaptionView
 - (BOOL)isFlipped { return YES; }
-- (void)drawRect:(NSRect)dirty {
-    (void)dirty;
-    [[NSColor colorWithWhite:0.06 alpha:0.92] setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:12 yRadius:12] fill];
-    if (!self.caption.length) return;
+- (void)drawCaption:(NSAttributedString *)caption inRect:(NSRect)box {
+    if (!caption.length) return;
 
     // Paint the last two visual lines, rather than letting a long stable
     // prefix permanently push the tentative words off screen.
-    NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:self.caption];
+    NSTextStorage *storage = [[NSTextStorage alloc] initWithAttributedString:caption];
     NSLayoutManager *layout = [NSLayoutManager new];
     NSTextContainer *container = [[NSTextContainer alloc]
-        initWithSize:NSMakeSize(MAX(1, NSWidth(self.bounds) - 32), CGFLOAT_MAX)];
+        initWithSize:NSMakeSize(MAX(1, NSWidth(box)), CGFLOAT_MAX)];
     container.lineFragmentPadding = 0;
     [layout addTextContainer:container];
     [storage addLayoutManager:layout];
@@ -65,8 +67,60 @@ static BOOL isConsoleSession(NSDictionary *info) {
     NSRange visible = previous.location == NSNotFound ? last : NSUnionRange(previous, last);
     CGFloat top = NSMinY(previous.location == NSNotFound ? lastRect : previousRect);
     CGFloat height = NSMaxY(lastRect) - top;
-    [layout drawGlyphsForGlyphRange:visible atPoint:NSMakePoint(16, (NSHeight(self.bounds) - height) / 2 - top)];
+    [layout drawGlyphsForGlyphRange:visible atPoint:NSMakePoint(NSMinX(box), NSMinY(box) + MAX(0, (NSHeight(box) - height) / 2) - top)];
 }
+- (void)meterAt:(NSPoint)origin level:(double)level color:(NSColor *)color {
+    for (int i = 0; i < 12; i++) {
+        [[color colorWithAlphaComponent:level * 12 > i ? 0.95 : 0.2] setFill];
+        CGFloat h = 5 + i / 2;
+        NSRect rect = NSMakeRect(origin.x + i * 5, origin.y + (12 - h) / 2, 3, h);
+        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:1 yRadius:1] fill];
+    }
+}
+- (void)drawRect:(NSRect)dirty {
+    (void)dirty;
+    [[NSColor colorWithRed:0.086 green:0.094 blue:0.125 alpha:0.60] setFill];
+    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:13 yRadius:13] fill];
+    NSString *phase = self.phase;
+    BOOL recording = [phase isEqualToString:@"recording"];
+    BOOL refining = [phase isEqualToString:@"finalizing"];
+    BOOL starting = [phase isEqualToString:@"starting"];
+    NSString *title = @"Quick Scribe";
+    if (starting) title = @"Opening audio…";
+    else if (refining) title = @"Refining transcript…";
+    else if ([phase isEqualToString:@"meeting"]) title = @"Meeting · Live draft";
+    else if ([phase isEqualToString:@"copied"]) title = @"Copied to clipboard";
+    else if ([phase isEqualToString:@"ready"]) title = @"Result ready · audiomemo dictate last";
+    else if ([phase isEqualToString:@"failed"]) title = @"No result · Check audiomemo status";
+    NSDictionary *header = @{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: NSColor.whiteColor};
+    CGFloat width = NSWidth(self.bounds);
+    [title drawInRect:NSMakeRect(16, 9, MAX(1, width - 104), 22) withAttributes:header];
+    NSColor *blue = [NSColor colorWithRed:0.53 green:0.78 blue:1 alpha:1];
+    NSColor *violet = [NSColor colorWithRed:0.78 green:0.66 blue:1 alpha:1];
+    if (refining || starting) {
+        int step = (int)(NSProcessInfo.processInfo.systemUptime / 0.09) % 8;
+        for (int i = 0; i < 8; i++) {
+            [[blue colorWithAlphaComponent:i == step ? 1 : 0.22] setFill];
+            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(width - 80 + i * 8, 15, 5, 5)] fill];
+        }
+    }
+    if (self.split) {
+        CGFloat half = MAX(1, (width - 42) / 2);
+        [@"Us" drawAtPoint:NSMakePoint(16, 35) withAttributes:@{NSForegroundColorAttributeName: blue}];
+        [@"Them" drawAtPoint:NSMakePoint(26 + half, 35) withAttributes:@{NSForegroundColorAttributeName: violet}];
+        if (recording && half > 110) {
+            [self meterAt:NSMakePoint(16 + half - 64, 35) level:self.level color:blue];
+            [self meterAt:NSMakePoint(26 + 2*half - 64, 35) level:self.remoteLevel color:violet];
+        }
+        [self drawCaption:self.caption inRect:NSMakeRect(16, 54, half, 54)];
+        [self drawCaption:self.remoteCaption inRect:NSMakeRect(26 + half, 54, half, 54)];
+    } else {
+        if (recording) [self meterAt:NSMakePoint(width - 82, 11) level:self.level color:blue];
+        [self drawCaption:self.caption inRect:NSMakeRect(16, 33, MAX(1, width - 32), 74)];
+    }
+}
+
 @end
 
 @interface AMTarget : NSObject
@@ -171,9 +225,35 @@ static BOOL sameFocus(AMTarget *a, AMTarget *b) {
 
 static uint64_t nextTarget;
 
+static const int trayFrames = 12;
+static const double trayFrameSeconds = 0.1;
+
+static NSImage *trayImage(AMTrayIcon icon, int frame) {
+    NSImage *image = [NSImage imageWithSize:NSMakeSize(22, 22) flipped:YES drawingHandler:^BOOL(NSRect rect) {
+        (void)rect;
+        static const int wave[] = {5, 6, 8, 11, 14, 16, 17, 16, 14, 11, 8, 6};
+        static const int still[] = {8, 17, 12};
+        BOOL recording = icon == AMTrayRecording;
+        [NSColor.blackColor setFill];
+        for (int bar = 0; bar < 3; ++bar) {
+            int h = icon == AMTrayRefining ? wave[(frame + trayFrames - 4 * bar) % trayFrames] : still[bar];
+            NSRect bounds = NSMakeRect((recording ? 4 : 5.5) + 4.5 * bar, (22 - h) / 2.0, 3, h);
+            [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:1.5 yRadius:1.5] fill];
+        }
+        if (recording) [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(17, 3, 4, 4)] fill];
+        return YES;
+    }];
+    image.template = YES;
+    return image;
+}
+
 @interface AMDesktop : NSObject
 @property(nonatomic) uintptr_t handle;
 @property(nonatomic, strong) NSStatusItem *item;
+@property(nonatomic) AMTrayIcon trayIcon;
+@property(nonatomic) NSTimeInterval trayStarted;
+@property(nonatomic) int trayFrame;
+@property(nonatomic, copy) NSArray<NSImage *> *trayAnimation;
 @property(nonatomic, strong) NSMenuItem *status;
 @property(nonatomic, strong) NSMenuItem *warning;
 @property(nonatomic, strong) NSMenuItem *dictate;
@@ -228,9 +308,34 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
     [menu addItem:row];
     return row;
 }
+- (void)updateTrayIcon:(AMTrayIcon)icon {
+    if (icon != self.trayIcon || !self.item.button.image) {
+        self.trayIcon = icon;
+        self.trayStarted = NSProcessInfo.processInfo.systemUptime;
+        self.trayFrame = -1;
+    } else if (icon != AMTrayRefining) {
+        return;
+    }
+    if (icon != AMTrayRefining) {
+        self.item.button.image = trayImage(icon, 0);
+        return;
+    }
+    if (!self.trayAnimation) {
+        NSMutableArray<NSImage *> *frames = [NSMutableArray arrayWithCapacity:trayFrames];
+        for (int frame = 0; frame < trayFrames; frame++) [frames addObject:trayImage(icon, frame)];
+        self.trayAnimation = frames;
+    }
+    int frame = (int)((NSProcessInfo.processInfo.systemUptime - self.trayStarted) / trayFrameSeconds) % trayFrames;
+    if (frame != self.trayFrame) {
+        self.trayFrame = frame;
+        self.item.button.image = self.trayAnimation[frame];
+    }
+}
 - (void)setUpMenu {
     self.item = [NSStatusBar.systemStatusBar statusItemWithLength:NSVariableStatusItemLength];
-    self.item.button.title = @"AudioMemo";
+    self.item.button.imagePosition = NSImageOnly;
+    [self.item.button setAccessibilityLabel:@"AudioMemo"];
+    [self updateTrayIcon:AMTrayIdle];
     NSMenu *menu = [NSMenu new];
     menu.autoenablesItems = NO;
     self.status = [self add:@"Ready" tag:-1 menu:menu];
@@ -329,6 +434,9 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
 - (void)tick:(NSTimer *)timer {
     (void)timer;
     amGoTick(self.handle, (__bridge void *)self);
+    if (self.trayIcon == AMTrayRefining) [self updateTrayIcon:AMTrayRefining];
+    if (self.panel.isVisible && ([self.caption.phase isEqualToString:@"starting"] ||
+                                 [self.caption.phase isEqualToString:@"finalizing"])) self.caption.needsDisplay = YES;
 }
 - (void)start {
     [self setUpMenu];
@@ -393,14 +501,10 @@ void am_ui_stop(void) {
 }
 
 void am_ui_render(void *ptr, const char *title, const char *status, const char *warning,
-                  int dictate, int meeting, int cancel) {
+                  int dictate, int meeting, int cancel, int icon) {
     AMDesktop *ui = (__bridge AMDesktop *)ptr;
-    NSString *label = text(title);
-    NSMutableAttributedString *display = [[NSMutableAttributedString alloc] initWithString:label];
-    if ([label hasPrefix:@"●"]) {
-        [display addAttribute:NSForegroundColorAttributeName value:NSColor.systemRedColor range:NSMakeRange(0, 1)];
-    }
-    ui.item.button.attributedTitle = display;
+    [ui updateTrayIcon:(AMTrayIcon)icon];
+    ui.item.button.toolTip = [NSString stringWithFormat:@"AudioMemo — %@", text(title)];
     ui.status.title = text(status);
     // A terse single line also keeps a backend diagnostic from sizing the menu off-screen.
     NSString *message = [text(warning) stringByReplacingOccurrencesOfString:@"\n" withString:@" · "];
@@ -419,15 +523,34 @@ void am_ui_render(void *ptr, const char *title, const char *status, const char *
     ui.chooseMeeting.enabled = meeting == 1;
 }
 
-void am_ui_caption(void *ptr, const char *sessionID, const char *stable, const char *tentative, int meeting) {
+static NSAttributedString *captionLine(NSString *done, NSString *draft, BOOL listening) {
+    if (!done.length && !draft.length && listening) draft = @"Listening…";
+    NSDictionary *committed = @{NSFontAttributeName: [NSFont systemFontOfSize:16 weight:NSFontWeightMedium],
+        NSForegroundColorAttributeName: NSColor.whiteColor};
+    NSDictionary *tentative = @{NSFontAttributeName: [NSFont systemFontOfSize:16],
+        NSForegroundColorAttributeName: [NSColor colorWithWhite:0.83 alpha:1]};
+    NSMutableAttributedString *line = [[NSMutableAttributedString alloc] initWithString:done attributes:committed];
+    if (draft.length) {
+        if (done.length && ![done hasSuffix:@" "] && ![draft hasPrefix:@" "])
+            [line appendAttributedString:[[NSAttributedString alloc] initWithString:@" " attributes:committed]];
+        [line appendAttributedString:[[NSAttributedString alloc] initWithString:draft attributes:tentative]];
+    }
+    return line;
+}
+
+void am_ui_caption(void *ptr, const char *sessionID, const char *phase, const char *stable, const char *tentative,
+    double level, int split, const char *us, const char *usDraft, double usLevel,
+    const char *them, const char *themDraft, double themLevel) {
     AMDesktop *ui = (__bridge AMDesktop *)ptr;
-    NSString *session = text(sessionID), *done = text(stable), *draft = text(tentative);
-    if (![ui active] || !session.length || (!done.length && !draft.length)) {
+    NSString *session = text(sessionID), *stage = text(phase);
+    if (![ui active] || !session.length) {
         [ui.panel orderOut:nil];
         ui.caption.caption = nil;
+        ui.caption.remoteCaption = nil;
         ui.captionSession = nil;
         return;
     }
+    BOOL meeting = [stage isEqualToString:@"meeting"];
     if (![ui.captionSession isEqualToString:session]) {
         ui.captionSession = session;
         ui.captionDisplay = meeting ? pointerDisplay() : (ui.triggerDisplay ?: pointerDisplay());
@@ -444,22 +567,15 @@ void am_ui_caption(void *ptr, const char *sessionID, const char *stable, const c
     NSRect work = screen.visibleFrame;
     CGFloat width = MIN(660, NSWidth(work) - 24);
     if (width <= 32) return;
-    NSRect frame = NSMakeRect(NSMidX(work) - width / 2, NSMinY(work) + 18, width, 68);
+    NSRect frame = NSMakeRect(NSMidX(work) - width / 2, NSMinY(work) + 18, width, 120);
     if (!NSEqualRects(ui.panel.frame, frame)) [ui.panel setFrame:frame display:NO];
-    NSMutableParagraphStyle *style = [NSMutableParagraphStyle new];
-    style.alignment = NSTextAlignmentCenter;
-    NSDictionary *committed = @{NSFontAttributeName: [NSFont systemFontOfSize:17 weight:NSFontWeightMedium],
-        NSForegroundColorAttributeName: NSColor.whiteColor, NSParagraphStyleAttributeName: style};
-    NSMutableDictionary *draftStyle = [committed mutableCopy];
-    draftStyle[NSForegroundColorAttributeName] = [NSColor colorWithWhite:0.78 alpha:1];
-    // Even the stable portion of a meeting preview is a draft, not the bundle transcript.
-    NSMutableAttributedString *caption = [[NSMutableAttributedString alloc] initWithString:done
-        attributes:meeting ? draftStyle : committed];
-    if (draft.length) {
-        if (done.length) [caption appendAttributedString:[[NSAttributedString alloc] initWithString:@" " attributes:committed]];
-        [caption appendAttributedString:[[NSAttributedString alloc] initWithString:draft attributes:draftStyle]];
-    }
-    ui.caption.caption = caption;
+    BOOL listening = meeting || [stage isEqualToString:@"recording"];
+    ui.caption.phase = stage;
+    ui.caption.split = split != 0;
+    ui.caption.level = split ? usLevel : level;
+    ui.caption.remoteLevel = themLevel;
+    ui.caption.caption = captionLine(text(split ? us : stable), text(split ? usDraft : tentative), listening);
+    ui.caption.remoteCaption = split ? captionLine(text(them), text(themDraft), listening) : nil;
     ui.caption.needsDisplay = YES;
     if (!ui.panel.isVisible) [ui.panel orderFrontRegardless];
 }

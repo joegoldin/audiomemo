@@ -314,3 +314,35 @@ func TestCannotCancelAfterDesktopHandoff(t *testing.T) {
 		t.Fatalf("cancel after handoff = %q, want busy", r.Error)
 	}
 }
+
+func TestQuickFinalIsReadableWithoutClipboard(t *testing.T) {
+	entered := make(chan bool, 1)
+	finish := make(chan struct{})
+	c := newTestController(t, Options{
+		StartQuick: func(context.Context, string, string, func(st.Preview), func(string)) (st.Quick, error) {
+			return &fakeQuick{result: func(context.Context) (string, error) {
+				entered <- true
+				<-finish
+				return "fixture final transcript", nil
+			}}, nil
+		},
+	})
+	start := do(c, "dictate.start")
+	stop := do(c, "dictate.stop")
+	receive(t, entered)
+	pending := do(c, "status").Status
+	close(finish)
+	if pending.Capture != "idle" || pending.JobState != "running" || pending.QuickState != "finalizing" || pending.QuickSession != start.ID {
+		t.Fatal(pending)
+	}
+	for deadline := time.Now().Add(time.Second); do(c, "status").Status.JobState == "running"; {
+		if time.Now().After(deadline) {
+			t.Fatal("final still running")
+		}
+		time.Sleep(time.Millisecond)
+	}
+	last := do(c, "last.text")
+	if start.Error != "" || stop.Error != "" || last.Error != "" || last.Text != "fixture final transcript" || last.Status.QuickState != "ready" {
+		t.Fatalf("start=%v stop=%v last=%v", start, stop, last)
+	}
+}

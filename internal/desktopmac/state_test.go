@@ -91,3 +91,38 @@ func TestSystemAudioPermissionMessagePreservesOtherCoreAudioErrors(t *testing.T)
 		t.Fatal(got)
 	}
 }
+
+func TestQuickOverlayStartsWithoutTextAndSurvivesCaptureClosure(t *testing.T) {
+	var s viewState
+	for _, phase := range []string{"starting", "recording", "finalizing", "ready"} {
+		s.update(st.Status{QuickSession: "quick", QuickState: phase})
+		p, got := s.overlay(time.Now())
+		if got != phase || p.Session != "quick" || p.Stable != "" {
+			t.Fatalf("phase %s: %v %s", phase, p, got)
+		}
+	}
+	if p, _ := s.overlay(time.Now().Add(time.Minute)); p.Session != "" {
+		t.Fatalf("kept expired result visible: %v", p)
+	}
+}
+
+func TestTrayAnimatesOnlyWhileQuickScribeRefines(t *testing.T) {
+	for _, tc := range []struct {
+		capture, quick string
+		want           trayIcon
+	}{
+		{"idle", "", trayIdle},
+		{"starting", "starting", trayIdle},
+		{"dictating", "recording", trayRecording},
+		{"meeting", "finalizing", trayRecording},
+		{"stopping", "finalizing", trayRefining},
+		{"idle", "finalizing", trayRefining},
+		{"idle", "copied", trayIdle},
+		{"idle", "failed", trayIdle},
+	} {
+		v := viewState{status: st.Status{Capture: tc.capture, QuickState: tc.quick}}
+		if got := v.render(time.Now()).icon; got != tc.want {
+			t.Errorf("capture=%s quick=%s: icon=%v, want %v", tc.capture, tc.quick, got, tc.want)
+		}
+	}
+}

@@ -41,18 +41,30 @@ type Manifest struct {
 	Transcript string  `json:"transcript,omitempty"`
 	Error      string  `json:"error,omitempty"`
 }
+type CaptionLane struct {
+	Stable    string  `json:"stable"`
+	Tentative string  `json:"tentative"`
+	Level     float64 `json:"level"`
+}
+
 type Preview struct {
-	Session   string `json:"session"`
-	Stable    string `json:"stable"`
-	Tentative string `json:"tentative"`
+	Split     bool        `json:"split,omitempty"`
+	Us        CaptionLane `json:"us"`
+	Them      CaptionLane `json:"them"`
+	Level     float64     `json:"level,omitempty"`
+	Session   string      `json:"session"`
+	Stable    string      `json:"stable"`
+	Tentative string      `json:"tentative"`
 }
 type Status struct {
-	Capture    string `json:"capture"`
-	Session    string `json:"session,omitempty"`
-	StartedUTC string `json:"started_utc,omitempty"`
-	Job        string `json:"job,omitempty"`
-	JobState   string `json:"job_state,omitempty"`
-	Warning    string `json:"warning,omitempty"`
+	QuickSession string `json:"quick_session,omitempty"`
+	QuickState   string `json:"quick_state,omitempty"`
+	Capture      string `json:"capture"`
+	Session      string `json:"session,omitempty"`
+	StartedUTC   string `json:"started_utc,omitempty"`
+	Job          string `json:"job,omitempty"`
+	JobState     string `json:"job_state,omitempty"`
+	Warning      string `json:"warning,omitempty"`
 }
 type Request struct {
 	Version int    `json:"version"`

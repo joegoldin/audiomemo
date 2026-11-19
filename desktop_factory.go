@@ -30,11 +30,6 @@ func desktopOptions(_ context.Context, path string) (desktopservice.Options, err
 	opts := meetingfinal.Options{Nemo: c.Transcribe.Nemo, Language: c.Transcribe.Language}
 	return desktopservice.Options{Desktop: nativeDesktop(), Paste: c.Desktop.Paste,
 		StartQuick: func(ctx context.Context, id, dev string, emit func(st.Preview), finish func(string)) (st.Quick, error) {
-			if runtime.GOOS == "darwin" {
-				if e := desktopmac.CheckMicrophonePermission(ctx); e != nil {
-					return nil, e
-				}
-			}
 			return quickscribe.Start(ctx, c, id, dev, emit, finish)
 		},
 		StartMeetingPreview: func(ctx context.Context, id, dev string, emit func(st.Preview)) (st.Meeting, error) {

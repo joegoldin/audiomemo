@@ -19,7 +19,6 @@ import (
 	"github.com/joegoldin/audiomemo/internal/record"
 	"github.com/joegoldin/audiomemo/internal/transcribe"
 	"github.com/joegoldin/audiomemo/internal/tui"
-	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
 )
 
@@ -41,9 +40,9 @@ directory.
 
 By default the audio is held in memory for the length of the run, so Q (or -t)
 can replace the live transcript with a final pass by the local batch model
-when you stop. With both Us and Them inputs selected, a local final pass runs
-automatically and labels each side. With -r/--no-record no audio is kept at all, not even in memory,
-and the live transcript is the only result.
+when you stop. With both Us and Them inputs selected, two independent live
+transcriptions run and the local final pass labels both sides in time order.
+With -r/--no-record no audio is retained for a final pass.
 
 Nothing leaves the machine unless --cloud is passed. --cloud lets ElevenLabs
 take over when the local live preview or final pass fails, which uploads the
@@ -165,7 +164,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	stdoutMode := resolvePrintMode(printFlag, isatty.IsTerminal(os.Stdout.Fd()), false)
+	stdoutMode := resolvePrintMode(printFlag, false)
 
 	if err := maybeOnboard(cfg, rConfig, ui); err != nil {
 		return err
@@ -187,11 +186,6 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	if cloud {
 		liveBackend = "auto"
 	}
-	streamer, err := transcribe.NewLiveStreamer(cfg, liveBackend)
-	if err != nil {
-		return err
-	}
-
 	devices, deviceLabel, skipped, err := resolveRecordDevices(cmd, cfg, ui)
 	if err != nil {
 		return err
@@ -227,7 +221,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 		LivePCM:     true,
 	})
 
-	if !scNoRecord && len(devices) > 1 {
+	if len(devices) > 1 {
 		inventory, e := record.ListDevices()
 		if e != nil {
 			return e
@@ -241,20 +235,34 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return err
 	}
+	var tap *pcmTap
+	var streamer *transcribe.Streamer
+	var sides *transcribe.SidePreview
 	defer func() {
+		rec.PCMReader.Close()
 		rec.Stop()
 		_ = rec.Wait()
-		streamer.Stop()
-		rec.PCMReader.Close()
+		if sides != nil {
+			sides.Stop()
+		} else if streamer != nil {
+			streamer.Stop()
+		}
 	}()
 
-	var tap *pcmTap
-	previewPCM := io.Reader(rec.PCMReader)
-	if !scNoRecord && len(opts.Roles) == 0 {
-		tap, previewPCM = tapPCM(rec.PCMReader)
+	if len(opts.Roles) > 0 {
+		sides, err = transcribe.StartSidePreview(cmd.Context(), cfg, liveBackend, rec.PCMReader, !scNoRecord)
+	} else {
+		streamer, err = transcribe.NewLiveStreamer(cfg, liveBackend)
+		if err != nil {
+			return err
+		}
+		var previewPCM io.Reader = rec.PCMReader
+		if !scNoRecord {
+			tap, previewPCM = tapPCM(rec.PCMReader)
+		}
+		err = streamer.Start(cmd.Context(), previewPCM, liveTranscriptPathFor(transcriptPath))
 	}
-
-	if err := streamer.Start(context.Background(), previewPCM, liveTranscriptPathFor(transcriptPath)); err != nil {
+	if err != nil {
 		return fmt.Errorf("live transcription failed to start: %w", err)
 	}
 
@@ -265,22 +273,23 @@ func runScribe(cmd *cobra.Command, args []string) error {
 
 	shouldTranscribe := rTranscribe
 	if rNoTUI {
-		go func() {
-			for warning := range streamer.Warning {
-				fmt.Fprintf(os.Stderr, "Warning: %v\n", warning)
-			}
-		}()
-		go func() {
-			for err := range streamer.Err {
-				fmt.Fprintf(os.Stderr, "Live preview failed: %v\n", err)
-			}
-		}()
+		if sides == nil {
+			logScribePreview("Live preview", streamer)
+		} else {
+			logScribePreview("Us preview", sides.Views[0])
+			logScribePreview("Them preview", sides.Views[1])
+		}
 		fmt.Fprintf(os.Stderr, "Transcribing to %s, %s (%s)...\n", transcriptPath, held, stops.hint())
 		if _, err := waitHeadless(rec); err != nil {
 			fmt.Fprintf(os.Stderr, "Warning: recording exited with error: %v\n", err)
 		}
 	} else {
-		model := tui.NewModelWithStreamer(rec, opts, streamer)
+		model := tui.NewModel(rec, opts)
+		if sides == nil {
+			model = tui.NewModelWithStreamer(rec, opts, streamer)
+		} else {
+			model.SetSidePreview(sides)
+		}
 		model.SetOutLabel(fmt.Sprintf("%s (%s)", transcriptPath, held))
 		if scNoRecord {
 			model.DisableBatch()
@@ -299,7 +308,22 @@ func runScribe(cmd *cobra.Command, args []string) error {
 
 	// Stopping the preview also reaps its model process, which has to be
 	// gone before the final pass loads the larger batch model.
-	streamer.Stop()
+	if sides == nil {
+		streamer.Stop()
+	} else {
+		sides.Stop()
+		var draft []string
+		for i, label := range []string{"Us", "Them"} {
+			if text := strings.TrimSpace(sides.Views[i].FullText()); text != "" {
+				draft = append(draft, label+": "+text)
+			}
+		}
+		if len(draft) > 0 {
+			if err := os.WriteFile(liveTranscriptPathFor(transcriptPath), []byte(strings.Join(draft, "\n")+"\n"), 0600); err != nil {
+				return fmt.Errorf("failed to save live transcript: %w", err)
+			}
+		}
+	}
 
 	if rec.StoppedForSilence() {
 		fmt.Fprintf(os.Stderr, "Stopped after %s of silence.\n", stops.MaxSilence)
@@ -317,7 +341,11 @@ func runScribe(cmd *cobra.Command, args []string) error {
 		if len(opts.Roles) > 0 {
 			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer cancel()
-			text, err = transcribe.NewNemo(cfg.Transcribe.Nemo).TranscribeSides(ctx, rec.RolePCM(), cfg.Transcribe.Language)
+			pcm, readErr := sides.PCM()
+			if readErr != nil {
+				return fmt.Errorf("read Us/Them audio (live draft kept): %w", readErr)
+			}
+			text, err = transcribe.NewNemo(cfg.Transcribe.Nemo).TranscribeSides(ctx, pcm, cfg.Transcribe.Language)
 			if err != nil {
 				return fmt.Errorf("source-attributed final failed (live draft kept): %w", err)
 			}
@@ -347,6 +375,19 @@ func runScribe(cmd *cobra.Command, args []string) error {
 		fmt.Println(text)
 	}
 	return nil
+}
+
+func logScribePreview(label string, view *transcribe.Streamer) {
+	go func() {
+		for warning := range view.Warning {
+			fmt.Fprintf(os.Stderr, "%s: %v\n", label, warning)
+		}
+	}()
+	go func() {
+		for err := range view.Err {
+			fmt.Fprintf(os.Stderr, "%s failed: %v\n", label, err)
+		}
+	}()
 }
 
 // transcriptHasText reports whether the live preview produced anything.
