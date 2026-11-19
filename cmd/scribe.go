@@ -41,7 +41,8 @@ directory.
 
 By default the audio is held in memory for the length of the run, so Q (or -t)
 can replace the live transcript with a final pass by the local batch model
-when you stop. With -r/--no-record no audio is kept at all, not even in memory,
+when you stop. With both Us and Them inputs selected, a local final pass runs
+automatically and labels each side. With -r/--no-record no audio is kept at all, not even in memory,
 and the live transcript is the only result.
 
 Nothing leaves the machine unless --cloud is passed. --cloud lets ElevenLabs
@@ -226,6 +227,16 @@ func runScribe(cmd *cobra.Command, args []string) error {
 		LivePCM:     true,
 	})
 
+	if !scNoRecord && len(devices) > 1 {
+		inventory, e := record.ListDevices()
+		if e != nil {
+			return e
+		}
+		opts.Roles, e = record.RecordingRoles(cfg, devices, inventory)
+		if e != nil {
+			return e
+		}
+	}
 	rec, err := record.Start(opts)
 	if err != nil {
 		return err
@@ -239,7 +250,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 
 	var tap *pcmTap
 	previewPCM := io.Reader(rec.PCMReader)
-	if !scNoRecord {
+	if !scNoRecord && len(opts.Roles) == 0 {
 		tap, previewPCM = tapPCM(rec.PCMReader)
 	}
 
@@ -248,7 +259,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	}
 
 	held := "audio held in memory"
-	if tap == nil {
+	if scNoRecord {
 		held = "no audio kept"
 	}
 
@@ -271,7 +282,7 @@ func runScribe(cmd *cobra.Command, args []string) error {
 	} else {
 		model := tui.NewModelWithStreamer(rec, opts, streamer)
 		model.SetOutLabel(fmt.Sprintf("%s (%s)", transcriptPath, held))
-		if tap == nil {
+		if scNoRecord {
 			model.DisableBatch()
 		}
 		p := tea.NewProgram(model, ui.Options(tea.WithAltScreen())...)
@@ -300,8 +311,19 @@ func runScribe(cmd *cobra.Command, args []string) error {
 
 	// With no live text to fall back on, asking for text on stdout is consent
 	// to the final pass, as it is for record.
-	if tap != nil && batchNeededForText(stdoutMode, transcriptHasText(transcriptPath), shouldTranscribe) {
-		text, err := transcribeFromMemory(cfg, tap.PCM(), cloud)
+	if !scNoRecord && (len(opts.Roles) > 0 || batchNeededForText(stdoutMode, transcriptHasText(transcriptPath), shouldTranscribe)) {
+		var text string
+		var err error
+		if len(opts.Roles) > 0 {
+			ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer cancel()
+			text, err = transcribe.NewNemo(cfg.Transcribe.Nemo).TranscribeSides(ctx, rec.RolePCM(), cfg.Transcribe.Language)
+			if err != nil {
+				return fmt.Errorf("source-attributed final failed (live draft kept): %w", err)
+			}
+		} else {
+			text, err = transcribeFromMemory(cfg, tap.PCM(), cloud)
+		}
 		if err != nil {
 			// The live transcript is already in place, so a failed upgrade
 			// is not a failed run.

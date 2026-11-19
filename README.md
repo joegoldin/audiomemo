@@ -607,6 +607,17 @@ The opt-in check uses only the repository's `testdata/test.ogg`.
     # Manage devices interactively
     audiomemo device
 
+### Us/Them in Scribe
+
+Run `scribe -D combo` for a conversation. When the selected inputs include
+both Us and Them, Scribe keeps the two sides separate **in memory**, shows a
+mixed live preview, and writes a time-ordered `Us:` / `Them:` transcript on
+stop. No `meeting start`, audio bundle, or speaker enrollment is needed. On a
+one-sided selection it keeps the usual plain transcript. `scribe -r` remains
+live-only: it cannot reconstruct source turns once the audio is discarded.
+The final labels identify inputs, not people within an input. A previously
+mixed audio file has no Us/Them provenance to recover.
+
 ## Desktop dictation and meetings
 
 The desktop is optional. `record`, `rect`, `recw`, `scribe`, `transcribe`, their pipes, and `record --stream` do not depend on it. **Quick Scribe** is for ephemeral dictation; standalone **`scribe`** still saves a transcript. **Meetings** intentionally keep the original inputs *and* a listening mix. Neither new mode uses the ordinary CLI's configured cloud fallback.

@@ -39,7 +39,7 @@ func SourceRole(c *config.Config, d Device, inventory []Device) (string, string,
 	if v, ok := c.Devices[def]; ok {
 		def = v
 	}
-	if _, group := c.DeviceGroups[c.Record.Device]; !group {
+	if _, group := c.DeviceGroups[c.Record.Device]; !group && def != "" {
 		for _, candidate := range inventory {
 			if candidate.Name == ResolveDeviceName(def, inventory) && !candidate.IsMonitor && candidate.Name != SystemAudioDevice {
 				if d.Name == candidate.Name {

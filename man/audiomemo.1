@@ -44,6 +44,9 @@ runs local live NeMo, keeps the transcript and writes no audio file. Its
 .B \-r
 option discards audio after live recognition. Cloud fallback for scribe requires
 .BR \-\-cloud .
+With a device group containing both Us and Them, scribe retains the two sides
+in memory and runs a local source-labelled final pass automatically. Its live
+preview remains mixed. A single side, or live-only mode, does not add side labels.
 Ordinary recording and transcription honor the configured backend: auto with an ElevenLabs key can upload audio if local inference fails. Use
 .B transcribe \-\-backend nemo
 for strictly local file transcription. On macOS

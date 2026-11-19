@@ -164,7 +164,10 @@ func (n *Nemo) TranscribePCM(ctx context.Context, pcm []byte, sampleRate int, op
 		return nil, err
 	}
 	defer cleanup()
+	return uploadPCM(ctx, base, auth, pcm, sampleRate, opts.Language, "json")
+}
 
+func uploadPCM(ctx context.Context, base string, auth nemoAuth, pcm []byte, sampleRate int, language, format string) (*Result, error) {
 	// Stream the form rather than assembling it, so an hour of audio is not
 	// held twice.
 	body, form := io.Pipe()
@@ -181,9 +184,9 @@ func (n *Nemo) TranscribePCM(ctx context.Context, pcm []byte, sampleRate int, op
 			if _, err := fw.Write(pcm); err != nil {
 				return err
 			}
-			w.WriteField("response_format", "json")
-			if opts.Language != "" {
-				w.WriteField("language", opts.Language)
+			w.WriteField("response_format", format)
+			if language != "" {
+				w.WriteField("language", language)
 			}
 			return w.Close()
 		}())
@@ -211,7 +214,8 @@ func (n *Nemo) TranscribePCM(ctx context.Context, pcm []byte, sampleRate int, op
 	}
 
 	var out struct {
-		Text *string `json:"text"`
+		Text  *string `json:"text"`
+		Words []Word  `json:"words"`
 	}
 	if err := json.Unmarshal(data, &out); err != nil {
 		return nil, fmt.Errorf("decode NeMo ASR: %w", err)
@@ -219,7 +223,7 @@ func (n *Nemo) TranscribePCM(ctx context.Context, pcm []byte, sampleRate int, op
 	if out.Text == nil {
 		return nil, fmt.Errorf("NeMo ASR output is missing text")
 	}
-	return &Result{Text: strings.TrimSpace(*out.Text)}, nil
+	return &Result{Text: strings.TrimSpace(*out.Text), Words: out.Words}, nil
 }
 
 // tailBuffer bounds subprocess diagnostics, including long model download logs.

@@ -30,6 +30,7 @@ type RecordOpts struct {
 	Channels    int
 	OutputPath  string
 	LivePCM     bool
+	Roles       []string // optional parallel input roles; capture aligned Us/Them PCM in memory
 
 	tapSampleRate int
 	tapChannels   int
@@ -54,6 +55,7 @@ type Recorder struct {
 	done      chan struct{} // closed when ffmpeg exits; safe for multiple waiters
 	exitErr   error
 	PCMReader io.ReadCloser
+	rolePCM   bytes.Buffer
 	nativeTap *systemAudioCapture
 	stopOnce  sync.Once
 	stopping  atomic.Bool
@@ -170,6 +172,16 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 			inputLabels += fmt.Sprintf("[%d:a]", i)
 		}
 	}
+	if len(opts.Roles) > 0 {
+		if len(opts.Roles) != n {
+			return nil, fmt.Errorf("expected one role per input")
+		}
+		var err error
+		alignment, inputLabels, err = roleGraph(opts.Roles)
+		if err != nil {
+			return nil, err
+		}
+	}
 	// When LivePCM is on, fork the mixed audio with asplit so the PCM pipe
 	// output gets the mix too — not just input 0 (the first mic) which is
 	// what ffmpeg auto-selects for an output without -map.
@@ -200,6 +212,9 @@ func BuildFFmpegArgsMulti(opts RecordOpts) ([]string, error) {
 		args = append(args, "-f", "null")
 	}
 	args = append(args, "-y", opts.OutputPath)
+	if len(opts.Roles) > 0 {
+		args = append(args, "-map", "[roles]", "-f", "s16le", "-ar", "16000", "-ac", "2", "pipe:1")
+	}
 	return args, nil
 }
 
@@ -322,6 +337,9 @@ func Start(opts RecordOpts) (*Recorder, error) {
 		expectedSources: expectedSources,
 	}
 
+	if len(opts.Roles) > 0 {
+		cmd.Stdout = &r.rolePCM
+	}
 	r.stopFn = r.Stop
 
 	threshold := opts.SilenceThreshold
@@ -605,3 +623,6 @@ func (r *Recorder) CloseCapture(ctx context.Context) error {
 		return ctx.Err()
 	}
 }
+
+// RolePCM returns interleaved Us/Them samples once every output has drained.
+func (r *Recorder) RolePCM() []byte { <-r.done; return r.rolePCM.Bytes() }
