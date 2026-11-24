@@ -125,8 +125,8 @@ static const CGFloat captionCardGap = 10;
         CGFloat half = (NSHeight(box) - captionCardGap) / 2;
         NSRect them = NSMakeRect(NSMinX(box), NSMinY(box), NSWidth(box), half);
         NSRect us = NSOffsetRect(them, 0, half + captionCardGap);
-        [self card:them title:@"Them" accent:violet caption:self.remoteCaption level:self.remoteLevel recording:recording busy:busy];
-        [self card:us title:@"Us" accent:blue caption:self.caption level:self.level recording:recording busy:busy];
+        [self card:them title:(meeting ? @"Them · Live draft" : @"Them") accent:violet caption:self.remoteCaption level:self.remoteLevel recording:recording busy:busy];
+        [self card:us title:(meeting ? @"Us · Live draft" : @"Us") accent:blue caption:self.caption level:self.level recording:recording busy:busy];
         return;
     }
     NSString *title = @"Quick Scribe";
@@ -603,7 +603,7 @@ void am_ui_caption(void *ptr, const char *sessionID, const char *phase, const ch
     BOOL recording = [stage isEqualToString:@"recording"];
     BOOL starting = [stage isEqualToString:@"starting"];
     BOOL refining = [stage isEqualToString:@"finalizing"];
-    split = split && (recording || starting || refining);
+    split = split && (recording || meeting || starting || refining);
     NSRect work = screen.visibleFrame;
     CGFloat width = MIN(split ? 560 : 720, NSWidth(work) - 40);
     if (width <= 32) return;

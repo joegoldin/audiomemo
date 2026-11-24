@@ -70,6 +70,9 @@ bool captions(const QString &output)
     const auto noUs = caption("recording", {{"them", them}}, true);
     const auto noThem = caption("recording", {{"us", us}}, true);
     const auto refined = caption("finalizing", preview, true);
+    const auto meeting = caption("meeting", preview, true);
+    const auto meetingNoThem = caption("meeting", {{"us", us}}, true);
+    const auto singleMeeting = caption("meeting", us, false);
     if (!output.isEmpty()) {
         const QDir dir(output);
         if (!single.save(dir.filePath("caption-single.png")) || !split.save(dir.filePath("caption-stacked.png")) ||
@@ -77,11 +80,13 @@ bool captions(const QString &output)
             return false;
     }
     if (split.size() != QSize(560, 218) || opening.size() != split.size() || refined.size() != split.size() ||
-        single.size() != QSize(720, 104) || copied.size() != single.size())
+        meeting.size() != split.size() || single.size() != QSize(720, 104) ||
+        singleMeeting.size() != single.size() || copied.size() != single.size())
         return false;
     const QRect top(0, 0, 560, 104), bottom(0, 114, 560, 104);
     return split.pixelColor(280, 109).alpha() == 0 && opening.pixelColor(280, 109).alpha() == 0 &&
-        refined.pixelColor(280, 109).alpha() == 0 &&
+        refined.pixelColor(280, 109).alpha() == 0 && meeting.pixelColor(280, 109).alpha() == 0 &&
+        meeting.copy(top) != meetingNoThem.copy(top) && meeting.copy(bottom) == meetingNoThem.copy(bottom) &&
         split.pixelColor(1, 52).alpha() > 230 && split.pixelColor(558, 52).alpha() > 230 &&
         split.pixelColor(1, 166).alpha() > 230 && split.pixelColor(558, 166).alpha() > 230 &&
         split.copy(top) == noUs.copy(top) && split.copy(bottom) != noUs.copy(bottom) &&

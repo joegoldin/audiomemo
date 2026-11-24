@@ -117,7 +117,7 @@ void card(QPainter &p, const QRect &box, const QString &title, const QJsonObject
 
 static bool stackedCaption(const QString &phase, bool split)
 {
-    return split && (phase == "starting" || phase == "recording" || phase == "finalizing");
+    return split && (phase == "starting" || phase == "recording" || phase == "meeting" || phase == "finalizing");
 }
 
 QSize captionSize(const QString &phase, bool split)
@@ -139,11 +139,11 @@ void paintCaption(QPainter &p, const QRect &box, const QString &phase, const QJs
     const QColor blue("#a7d4ff"), violet("#d9c4ff");
     if (stackedCaption(phase, split)) {
         const int half = (box.height() - captionCardGap) / 2;
-        const QString empty = recording ? QString("Listening…") : starting ? QString("Opening audio…") : QString("Refining…");
+        const QString empty = recording || meeting ? QString("Listening…") : starting ? QString("Opening audio…") : QString("Refining…");
         const QRect them(box.x(), box.y(), box.width(), half);
         const QRect us(box.x(), box.y() + half + captionCardGap, box.width(), half);
-        card(p, them, "Them", preview.value("them").toObject(), violet, recording, busy, false, empty, elapsed);
-        card(p, us, "Us", preview.value("us").toObject(), blue, recording, busy, false, empty, elapsed);
+        card(p, them, meeting ? "Them · Live draft" : "Them", preview.value("them").toObject(), violet, recording, busy, false, empty, elapsed);
+        card(p, us, meeting ? "Us · Live draft" : "Us", preview.value("us").toObject(), blue, recording, busy, false, empty, elapsed);
         return;
     }
     QString title = "Quick Scribe";

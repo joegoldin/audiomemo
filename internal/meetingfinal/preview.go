@@ -27,26 +27,79 @@ type draftResult struct {
 	ok          bool
 }
 
+type draftLane struct {
+	stable string
+	behind bool
+}
+
+func (l *draftLane) add(text string) {
+	l.stable = strings.TrimSpace(l.stable + "\n" + text)
+	chars := []rune(l.stable)
+	if len(chars) > draftMaxRunes {
+		l.stable = string(chars[len(chars)-draftMaxRunes:])
+	}
+}
+
+func (l draftLane) caption() sessiontypes.CaptionLane {
+	var tentative string
+	if l.behind {
+		tentative = "Draft behind"
+	}
+	return sessiontypes.CaptionLane{Stable: l.stable, Tentative: tentative}
+}
+
 // Preview reads the single lossy capture feed and emits replacement draft
 // snapshots. Keep one window per source, one active job and one pending job.
 // Downstream emit must return promptly; canceling this context stops draft ASR.
-func Preview(ctx context.Context, pcm <-chan sessiontypes.PCM, opts Options, emit func(sessiontypes.Preview)) {
+func Preview(ctx context.Context, pcm <-chan sessiontypes.PCM, sources []sessiontypes.Source, opts Options, emit func(sessiontypes.Preview)) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	asr := opts.recognizer()
 	result := make(chan draftResult, 1)
 	byTrack := make(map[string]*draftWindow)
+	roles := make(map[string]string, len(sources))
+	var hasUs, hasThem bool
+	for _, source := range sources {
+		roles[source.ID] = source.Role
+		hasUs = hasUs || source.Role == "us"
+		hasThem = hasThem || source.Role == "them"
+	}
+	split := hasUs && hasThem
+	var combined, us, them draftLane
+	lane := func(track string) *draftLane {
+		if !split {
+			return &combined
+		}
+		switch roles[track] {
+		case "us":
+			return &us
+		case "them":
+			return &them
+		}
+		return nil
+	}
 	busy := false
 	var pending draftWindow
-	behind := false
-	stable := ""
 	publish := func() {
-		tentative := "Draft · final transcript will be rebuilt from the originals"
-		if behind {
-			tentative = "Draft behind · final transcript will be rebuilt from the originals"
+		if ctx.Err() != nil {
+			return
 		}
-		if ctx.Err() == nil {
-			emit(sessiontypes.Preview{Session: opts.Session, Stable: stable, Tentative: tentative})
+		p := sessiontypes.Preview{Session: opts.Session, Split: split}
+		if split {
+			p.Us, p.Them = us.caption(), them.caption()
+		} else {
+			p.Stable = combined.stable
+			p.Tentative = "Draft · final transcript will be rebuilt from the originals"
+			if combined.behind {
+				p.Tentative = "Draft behind · final transcript will be rebuilt from the originals"
+			}
+		}
+		emit(p)
+	}
+	markBehind := func(track string) {
+		if l := lane(track); !l.behind {
+			l.behind = true
+			publish()
 		}
 	}
 	launch := func(window draftWindow) bool {
@@ -72,7 +125,7 @@ func Preview(ctx context.Context, pcm <-chan sessiontypes.PCM, opts Options, emi
 			if !ok {
 				return
 			}
-			if !validDraftPCM(p) {
+			if !validDraftPCM(p) || lane(p.Track) == nil {
 				continue
 			}
 			d := byTrack[p.Track]
@@ -83,9 +136,8 @@ func Preview(ctx context.Context, pcm <-chan sessiontypes.PCM, opts Options, emi
 				d = &draftWindow{track: p.Track, pcm: make([]byte, 0, draftBytes)}
 				byTrack[p.Track] = d
 			}
-			if d.append(p) && !behind {
-				behind = true
-				publish()
+			if d.append(p) {
+				markBehind(p.Track)
 			}
 			if len(d.pcm) == draftBytes {
 				window := *d
@@ -100,29 +152,26 @@ func Preview(ctx context.Context, pcm <-chan sessiontypes.PCM, opts Options, emi
 					d.pcm = make([]byte, 0, draftBytes)
 				} else {
 					d.pcm = d.pcm[:0]
-					if !behind {
-						behind = true
-						publish()
-					}
+					markBehind(p.Track)
 				}
 			}
 		case r := <-result:
 			busy = false
 			if !r.ok {
-				behind = true
+				lane(r.track).behind = true
 			}
 			if pending.pcm != nil {
 				if !launch(pending) {
-					behind = true
+					lane(pending.track).behind = true
 				}
 				pending = draftWindow{}
 			}
 			if r.text != "" {
-				stable = strings.TrimSpace(stable + "\n" + r.track + ": " + r.text)
-				chars := []rune(stable)
-				if len(chars) > draftMaxRunes {
-					stable = string(chars[len(chars)-draftMaxRunes:])
+				text := r.text
+				if !split {
+					text = r.track + ": " + text
 				}
+				lane(r.track).add(text)
 			}
 			// Stay visibly behind after any dropped window: a later result can't
 			// fill the earlier gap. The authoritative batch run will rebuild it.

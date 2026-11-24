@@ -116,7 +116,7 @@ func TestMeetingNativeNemo(t *testing.T) {
 			to := from + recognitionRate*2
 			feed <- sessiontypes.PCM{Track: "001", StartMS: int64(second * 1000), Rate: recognitionRate, Channels: 1, S16LE: pcm["001"][from:to]}
 		}
-		go Preview(ctx, feed, opts, func(p sessiontypes.Preview) { out <- p })
+		go Preview(ctx, feed, nil, opts, func(p sessiontypes.Preview) { out <- p })
 		for {
 			select {
 			case p := <-out:

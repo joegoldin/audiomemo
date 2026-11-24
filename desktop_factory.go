@@ -61,7 +61,7 @@ func desktopOptions(_ context.Context, path string) (desktopservice.Options, err
 			}
 			p := opts
 			p.Session = id
-			go meetingfinal.Preview(ctx, cap.Preview(), p, emit)
+			go meetingfinal.Preview(ctx, cap.Preview(), sources, p, emit)
 			return cap, nil
 		},
 		FinalizeMeeting: func(ctx context.Context, b string) (string, error) { return meetingfinal.Finalize(ctx, b, opts) }, ValidateRetry: func(_ context.Context, b string) (string, error) { return meetingcapture.RetryPath(root, b) }}, nil

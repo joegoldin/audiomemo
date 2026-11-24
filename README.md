@@ -661,6 +661,8 @@ audiomemo meeting stop > call.txt     # waits and writes only the transcript
 audiomemo meeting stop --print path   # prints the durable bundle path
 ```
 
+While a meeting is recording, groups with both roles show stacked **Them** and **Us** live-draft cards. A single-role meeting shows one card. The live draft is best-effort; the final transcript is rebuilt from the original tracks.
+
 Stop closes the sources before final transcription. Keep the bundle if inference or mixing fails; `audiomemo meeting retry <bundle>` works on the originals, not a fresh recording. There is no automatic expiry. Disk use scales with track count: 48 kHz 16-bit mono PCM alone is about 346 MB per hour per input, plus the listening mix, metadata and any exports. Use `man audiomemo` for commands, pipes, signals and role precedence.
 
 Home Manager can supply the service without starting it at login:
