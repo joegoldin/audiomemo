@@ -5,7 +5,7 @@
 // These enums also back the Go bridge's status mappings.
 typedef enum {
     AMQuit, AMToggle, AMStartDictate, AMStopDictate, AMCancelDictate,
-    AMStartMeeting, AMStopMeeting, AMCopyLast
+    AMStartMeeting, AMStopMeeting, AMCopyLast, AMToggleBoth, AMStartDictateBoth
 } AMAction;
 
 typedef enum {

@@ -104,7 +104,7 @@ func (s *Session) notify(reason string) {
 		}
 	})
 }
-func Start(ctx context.Context, c *config.Config, id, device string, caption func(sessiontypes.Preview), finish func(string)) (sessiontypes.Quick, error) {
+func Start(ctx context.Context, c *config.Config, id, device string, both bool, caption func(sessiontypes.Preview), finish func(string)) (sessiontypes.Quick, error) {
 	if _, err := exec.LookPath(c.Transcribe.Nemo.Binary); err != nil {
 		return nil, fmt.Errorf("Quick Scribe needs local NeMo: %w", err)
 	}
@@ -112,7 +112,7 @@ func Start(ctx context.Context, c *config.Config, id, device string, caption fun
 	if err != nil {
 		return nil, err
 	}
-	devices, roles, err := quickDevices(c, device, ds)
+	devices, roles, err := quickDevices(c, device, both, ds)
 	if err != nil {
 		return nil, err
 	}
@@ -170,15 +170,17 @@ func Start(ctx context.Context, c *config.Config, id, device string, caption fun
 
 // Implicit single-device dictation stays microphone-only. Explicit device
 // and group selections may include system audio.
-func quickDevices(c *config.Config, selected string, ds []record.Device) ([]string, []string, error) {
-	implicit := selected == ""
-	if implicit {
-		selected = c.Desktop.DictationMic
+func quickDevices(c *config.Config, selected string, both bool, ds []record.Device) ([]string, []string, error) {
+	if both {
+		selected = c.Desktop.DictationGroup
 		if selected == "" {
-			selected = c.Record.Device
+			selected = c.Desktop.MeetingDevice
+		}
+		if _, ok := c.DeviceGroups[selected]; !ok {
+			return nil, nil, fmt.Errorf("set desktop.dictation_group to a device group with Us and Them inputs")
 		}
 	}
-	if _, group := c.DeviceGroups[selected]; implicit && !group {
+	if selected == "" {
 		name, err := mic(c, selected, ds)
 		return []string{name}, nil, err
 	}
@@ -191,6 +193,9 @@ func quickDevices(c *config.Config, selected string, ds []record.Device) ([]stri
 		devices = append(devices, source.Device)
 	}
 	roles, err := record.RecordingRoles(c, devices, ds)
+	if err == nil && both && len(roles) == 0 {
+		return nil, nil, fmt.Errorf("device group %q needs both Us and Them inputs", selected)
+	}
 	return devices, roles, err
 }
 

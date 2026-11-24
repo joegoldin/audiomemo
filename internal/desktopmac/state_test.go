@@ -106,7 +106,7 @@ func TestQuickOverlayStartsWithoutTextAndSurvivesCaptureClosure(t *testing.T) {
 	}
 }
 
-func TestTrayAnimatesOnlyWhileQuickScribeRefines(t *testing.T) {
+func TestTrayTracksCaptureAndQuickScribeRefining(t *testing.T) {
 	for _, tc := range []struct {
 		capture, quick string
 		want           trayIcon
@@ -124,5 +124,23 @@ func TestTrayAnimatesOnlyWhileQuickScribeRefines(t *testing.T) {
 		if got := v.render(time.Now()).icon; got != tc.want {
 			t.Errorf("capture=%s quick=%s: icon=%v, want %v", tc.capture, tc.quick, got, tc.want)
 		}
+	}
+}
+
+func TestSplitOverlayBeforeFirstPreviewAndAfterStop(t *testing.T) {
+	var s viewState
+	s.update(st.Status{Capture: "starting", Session: "dual", QuickSession: "dual", QuickState: "starting", QuickSplit: true})
+	if p, _ := s.overlay(time.Now()); !p.Split {
+		t.Fatal("opening phase did not show both sources")
+	}
+	s.update(st.Status{Capture: "dictating", Session: "dual", QuickSession: "dual", QuickState: "recording", QuickSplit: true})
+	s.caption(st.Preview{Session: "dual", Split: true, Them: st.CaptionLane{Stable: "remote words"}})
+	s.update(st.Status{Capture: "idle", QuickSession: "dual", QuickState: "finalizing", QuickSplit: true})
+	if p, _ := s.overlay(time.Now()); !p.Split || p.Them.Stable != "remote words" {
+		t.Fatal("refining phase dropped a source")
+	}
+	s.update(st.Status{Capture: "starting", Session: "single", QuickSession: "single", QuickState: "starting"})
+	if p, _ := s.overlay(time.Now()); p.Split || p.Them.Stable != "" {
+		t.Fatal("regular dictation inherited the previous lanes")
 	}
 }

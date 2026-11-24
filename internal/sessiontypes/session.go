@@ -59,6 +59,7 @@ type Preview struct {
 type Status struct {
 	QuickSession string `json:"quick_session,omitempty"`
 	QuickState   string `json:"quick_state,omitempty"`
+	QuickSplit   bool   `json:"quick_split,omitempty"`
 	Capture      string `json:"capture"`
 	Session      string `json:"session,omitempty"`
 	StartedUTC   string `json:"started_utc,omitempty"`
@@ -70,6 +71,7 @@ type Request struct {
 	Version int    `json:"version"`
 	Action  string `json:"action"`
 	Device  string `json:"device,omitempty"`
+	Both    bool   `json:"both,omitempty"`
 	Bundle  string `json:"bundle,omitempty"`
 	Wait    bool   `json:"wait,omitempty"`
 	Print   string `json:"print,omitempty"`

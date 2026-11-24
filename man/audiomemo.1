@@ -57,9 +57,15 @@ selects a downloaded Voice Memo.
 .B dictate toggle
 starts the configured microphone or finishes the current dictation. Pass
 .B \-D group
-for a device group. A click-through caption shows live text and meters, then
-indicates the final pass. Cancel discards without copy or paste. No audio or
-transcript file is created. Final text is copied by default; paste is opt-in.
+for a device group, or
+.B \-\-both
+for separate Us and Them cards using
+.B desktop.dictation_group
+(falling back to
+.BR desktop.meeting_device ).
+A click-through caption shows live text and meters, then indicates the final pass.
+Cancel discards without copy or paste. No audio or transcript file is created.
+Final text is copied by default; paste is opt-in.
 .B dictate last
 prints the last completed transcript from the running daemon, even if copying
 failed. Add

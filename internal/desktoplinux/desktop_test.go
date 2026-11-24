@@ -162,3 +162,18 @@ func TestFakeHelper(t *testing.T) {
 	}
 	os.Exit(0)
 }
+
+func TestSplitCaptionSurvivesFinalizingButNotNextSession(t *testing.T) {
+	d := New()
+	d.Update(sessiontypes.Status{Capture: "dictating", Session: "first", QuickSession: "first", QuickState: "recording"})
+	want := sessiontypes.Preview{Session: "first", Split: true, Them: sessiontypes.CaptionLane{Stable: "remote words"}}
+	d.Caption(want)
+	d.Update(sessiontypes.Status{Capture: "idle", QuickSession: "first", QuickState: "finalizing"})
+	if d.preview != want {
+		t.Fatal("capture closure dropped caption")
+	}
+	d.Update(sessiontypes.Status{Capture: "starting", Session: "second", QuickSession: "second", QuickState: "starting"})
+	if d.preview != (sessiontypes.Preview{}) {
+		t.Fatal("a new capture carried over the previous caption")
+	}
+}

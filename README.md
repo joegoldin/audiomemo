@@ -631,6 +631,7 @@ combo = ["mic", "speakers"]
 [desktop]
 meeting_device = "combo"
 dictation_mic = "mic"
+dictation_group = "combo"
 paste = false
 
 [device_roles]
@@ -640,7 +641,18 @@ speakers = "them"
 
 On a Mac, use `system-audio` as the target of the remote alias. A MacBook mic plus System audio uses the same group workflow as Linux. Roles are optional: explicit assignments win, monitors default to Them, the configured mic (or OS default when applicable) defaults to Us, and other inputs default to Them. Use `audiomemo device` to see and cycle assignments, or `audiomemo device role speakers auto` to restore inference. Assign a second mic to Us if it represents someone else in the room. **Role is not speaker identity**: diarization speaker numbers are local to their input. Speaker playback may also bleed into local microphones; use headphones for the cleanest separation.
 
-Run `audiomemo daemon` in your graphical session. It stays in the foreground. `audiomemo daemon --headless` runs without the tray; `audiomemo status --json` inspects it and `audiomemo quit` stops it. No microphone is opened just because the daemon starts. Bind a global shortcut on Plasma under **System Settings → Keyboard → Shortcuts → Add New → Command or Script** to the packaged `audiomemo dictate toggle`. The click-through caption appears while audio opens, shows the input level and live text, then animates while the final model refines it. Stop copies the final text once; cancel discards it. Use `-D combo` on the shortcut command for both sides, or leave it off for the configured microphone. `audiomemo dictate last` prints the last completed result from this daemon session, even if copying failed; add `--copy` to retry the clipboard. Clipboard managers can retain dictation even when AudioMemo writes no file. Paste is opt-in and copy is the safe fallback when the app cannot confirm the target.
+Run `audiomemo daemon` in your graphical session. It stays in the foreground. `audiomemo daemon --headless` runs without the tray; `audiomemo status --json` inspects it and `audiomemo quit` stops it. No microphone is opened just because the daemon starts.
+
+| Quick Scribe mode | macOS | Plasma command to bind |
+| --- | --- | --- |
+| Microphone | Control–Option–Space | `audiomemo dictate toggle` |
+| Us and Them | Control–Option–Shift–Space | `audiomemo dictate toggle --both` |
+
+On Plasma, add both commands under **System Settings → Keyboard → Shortcuts → Add New → Command or Script** using the absolute path to the packaged binary. Add Alt to your usual chord for the second command if it’s free. Press the same shortcut again to stop. Both shortcuts control one Quick Scribe session; they don't switch inputs mid-session.
+
+`--both` uses `desktop.dictation_group`, falling back to `desktop.meeting_device` if unset. The group must include both roles. `-D combo` still selects an explicit group. The click-through overlay stacks two equal-width cards, Them above Us, with independent input meters and live text, and keeps the cards visible while the final model refines the transcript. The three tray bars animate while recording.
+
+Stop copies the final text once; cancel discards it. `audiomemo dictate last` prints the last completed result from this daemon session, even if copying failed; add `--copy` to retry the clipboard. Clipboard managers can retain dictation even when AudioMemo writes no file. Paste is opt-in and copy is the safe fallback when the app cannot confirm the target.
 
 ```fish
 audiomemo meeting start -D combo       # prints the admitted meeting ID

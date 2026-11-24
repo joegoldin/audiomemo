@@ -325,9 +325,10 @@ func (c *Config) ResolveDevice(name string) ([]string, error) {
 }
 
 type DesktopConfig struct {
-	MeetingDevice string `toml:"meeting_device,omitempty"`
-	DictationMic  string `toml:"dictation_mic,omitempty"`
-	Paste         bool   `toml:"paste,omitempty"`
+	MeetingDevice  string `toml:"meeting_device,omitempty"`
+	DictationMic   string `toml:"dictation_mic,omitempty"`
+	DictationGroup string `toml:"dictation_group,omitempty"`
+	Paste          bool   `toml:"paste,omitempty"`
 }
 
 func (c *Config) SetDeviceRole(name, role string) error {

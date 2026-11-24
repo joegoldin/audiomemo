@@ -134,7 +134,7 @@ func TestIPCPrivatePathsAndStaleSocket(t *testing.T) {
 }
 
 func TestIPCBadFrameDoesNotAffectOtherClients(t *testing.T) {
-	c, _ := startTestRun(t, Options{RuntimeDir: shortRuntime(t), StartQuick: func(context.Context, string, string, func(st.Preview), func(string)) (st.Quick, error) {
+	c, _ := startTestRun(t, Options{RuntimeDir: shortRuntime(t), StartQuick: func(context.Context, string, string, bool, func(st.Preview), func(string)) (st.Quick, error) {
 		t.Error("invalid request reached capture")
 		return nil, errors.New("unexpected")
 	}})

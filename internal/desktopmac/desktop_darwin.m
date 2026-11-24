@@ -4,6 +4,7 @@
 #import <Carbon/Carbon.h>
 #import <Security/AuthSession.h>
 #import <unistd.h>
+#include <math.h>
 #include "desktop_darwin.h"
 #include "_cgo_export.h"
 
@@ -27,6 +28,9 @@ static BOOL isConsoleSession(NSDictionary *info) {
 - (BOOL)canBecomeKeyWindow { return NO; }
 - (BOOL)canBecomeMainWindow { return NO; }
 @end
+
+static const CGFloat captionCardHeight = 104;
+static const CGFloat captionCardGap = 10;
 
 @interface AMCaptionView : NSView
 @property(nonatomic, copy) NSAttributedString *caption;
@@ -66,59 +70,75 @@ static BOOL isConsoleSession(NSDictionary *info) {
     if (last.location == NSNotFound) return;
     NSRange visible = previous.location == NSNotFound ? last : NSUnionRange(previous, last);
     CGFloat top = NSMinY(previous.location == NSNotFound ? lastRect : previousRect);
-    CGFloat height = NSMaxY(lastRect) - top;
-    [layout drawGlyphsForGlyphRange:visible atPoint:NSMakePoint(NSMinX(box), NSMinY(box) + MAX(0, (NSHeight(box) - height) / 2) - top)];
+    [NSGraphicsContext saveGraphicsState];
+    NSRectClip(box);
+    [layout drawGlyphsForGlyphRange:visible atPoint:NSMakePoint(NSMinX(box), NSMinY(box) - top)];
+    [NSGraphicsContext restoreGraphicsState];
 }
 - (void)meterAt:(NSPoint)origin level:(double)level color:(NSColor *)color {
-    for (int i = 0; i < 12; i++) {
-        [[color colorWithAlphaComponent:level * 12 > i ? 0.95 : 0.2] setFill];
-        CGFloat h = 5 + i / 2;
-        NSRect rect = NSMakeRect(origin.x + i * 5, origin.y + (12 - h) / 2, 3, h);
-        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:1 yRadius:1] fill];
+    for (int i = 0; i < 7; i++) {
+        [[color colorWithAlphaComponent:level * 7 > i ? 0.94 : 0.20] setFill];
+        CGFloat h = 5 + i;
+        NSRect rect = NSMakeRect(origin.x + i * 5, origin.y - h / 2, 3, h);
+        [[NSBezierPath bezierPathWithRoundedRect:rect xRadius:1.5 yRadius:1.5] fill];
     }
+}
+- (void)card:(NSRect)box title:(NSString *)title accent:(NSColor *)accent
+     caption:(NSAttributedString *)caption level:(double)level recording:(BOOL)recording busy:(BOOL)busy {
+    NSBezierPath *path = [NSBezierPath bezierPathWithRoundedRect:NSInsetRect(box, 0.5, 0.5) xRadius:14 yRadius:14];
+    [[NSColor colorWithSRGBRed:23.0/255 green:26.0/255 blue:33.0/255 alpha:0.96] setFill];
+    [path fill];
+    [[NSColor colorWithWhite:1 alpha:0.13] setStroke];
+    [path stroke];
+
+    BOOL showActivity = (recording || busy) && NSWidth(box) > 130;
+    NSMutableParagraphStyle *style = [NSMutableParagraphStyle new];
+    style.lineBreakMode = NSLineBreakByTruncatingTail;
+    NSDictionary *header = @{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
+        NSForegroundColorAttributeName: accent, NSParagraphStyleAttributeName: style};
+    [title drawInRect:NSMakeRect(NSMinX(box) + 15, NSMinY(box) + 13,
+        MAX(1, NSWidth(box) - 30 - (showActivity ? 47 : 0)), 20) withAttributes:header];
+    if (showActivity && recording) {
+        [self meterAt:NSMakePoint(NSMaxX(box) - 48, NSMinY(box) + 21) level:level color:accent];
+    } else if (showActivity) {
+        int step = (int)(NSProcessInfo.processInfo.systemUptime / 0.15) % 3;
+        for (int i = 0; i < 3; i++) {
+            [[accent colorWithAlphaComponent:i == step ? 0.94 : 0.25] setFill];
+            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(NSMaxX(box) - 36 + i * 8, NSMinY(box) + 19, 4, 4)] fill];
+        }
+    }
+    [self drawCaption:caption inRect:NSMakeRect(NSMinX(box) + 15, NSMinY(box) + 37, NSWidth(box) - 30, 48)];
 }
 - (void)drawRect:(NSRect)dirty {
     (void)dirty;
-    [[NSColor colorWithRed:0.086 green:0.094 blue:0.125 alpha:0.60] setFill];
-    [[NSBezierPath bezierPathWithRoundedRect:self.bounds xRadius:13 yRadius:13] fill];
     NSString *phase = self.phase;
     BOOL recording = [phase isEqualToString:@"recording"];
     BOOL refining = [phase isEqualToString:@"finalizing"];
     BOOL starting = [phase isEqualToString:@"starting"];
+    BOOL meeting = [phase isEqualToString:@"meeting"];
+    BOOL busy = starting || refining;
+    BOOL compact = !recording && !busy && !meeting;
+    NSColor *blue = [NSColor colorWithSRGBRed:0.65 green:0.83 blue:1 alpha:1];
+    NSColor *violet = [NSColor colorWithSRGBRed:0.85 green:0.77 blue:1 alpha:1];
+    NSRect box = self.bounds;
+    if (self.split) {
+        CGFloat half = (NSHeight(box) - captionCardGap) / 2;
+        NSRect them = NSMakeRect(NSMinX(box), NSMinY(box), NSWidth(box), half);
+        NSRect us = NSOffsetRect(them, 0, half + captionCardGap);
+        [self card:them title:@"Them" accent:violet caption:self.remoteCaption level:self.remoteLevel recording:recording busy:busy];
+        [self card:us title:@"Us" accent:blue caption:self.caption level:self.level recording:recording busy:busy];
+        return;
+    }
     NSString *title = @"Quick Scribe";
     if (starting) title = @"Opening audio…";
     else if (refining) title = @"Refining transcript…";
-    else if ([phase isEqualToString:@"meeting"]) title = @"Meeting · Live draft";
+    else if (meeting) title = @"Meeting · Live draft";
     else if ([phase isEqualToString:@"copied"]) title = @"Copied to clipboard";
     else if ([phase isEqualToString:@"ready"]) title = @"Result ready · audiomemo dictate last";
     else if ([phase isEqualToString:@"failed"]) title = @"No result · Check audiomemo status";
-    NSDictionary *header = @{NSFontAttributeName: [NSFont systemFontOfSize:13 weight:NSFontWeightSemibold],
-        NSForegroundColorAttributeName: NSColor.whiteColor};
-    CGFloat width = NSWidth(self.bounds);
-    [title drawInRect:NSMakeRect(16, 9, MAX(1, width - 104), 22) withAttributes:header];
-    NSColor *blue = [NSColor colorWithRed:0.53 green:0.78 blue:1 alpha:1];
-    NSColor *violet = [NSColor colorWithRed:0.78 green:0.66 blue:1 alpha:1];
-    if (refining || starting) {
-        int step = (int)(NSProcessInfo.processInfo.systemUptime / 0.09) % 8;
-        for (int i = 0; i < 8; i++) {
-            [[blue colorWithAlphaComponent:i == step ? 1 : 0.22] setFill];
-            [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(width - 80 + i * 8, 15, 5, 5)] fill];
-        }
-    }
-    if (self.split) {
-        CGFloat half = MAX(1, (width - 42) / 2);
-        [@"Us" drawAtPoint:NSMakePoint(16, 35) withAttributes:@{NSForegroundColorAttributeName: blue}];
-        [@"Them" drawAtPoint:NSMakePoint(26 + half, 35) withAttributes:@{NSForegroundColorAttributeName: violet}];
-        if (recording && half > 110) {
-            [self meterAt:NSMakePoint(16 + half - 64, 35) level:self.level color:blue];
-            [self meterAt:NSMakePoint(26 + 2*half - 64, 35) level:self.remoteLevel color:violet];
-        }
-        [self drawCaption:self.caption inRect:NSMakeRect(16, 54, half, 54)];
-        [self drawCaption:self.remoteCaption inRect:NSMakeRect(26 + half, 54, half, 54)];
-    } else {
-        if (recording) [self meterAt:NSMakePoint(width - 82, 11) level:self.level color:blue];
-        [self drawCaption:self.caption inRect:NSMakeRect(16, 33, MAX(1, width - 32), 74)];
-    }
+    if (compact || starting) box = NSMakeRect(NSMinX(box), NSMaxY(box) - 44, NSWidth(box), 44);
+    [self card:box title:title accent:blue caption:compact || starting ? nil : self.caption
+        level:self.level recording:recording busy:busy];
 }
 
 @end
@@ -225,22 +245,19 @@ static BOOL sameFocus(AMTarget *a, AMTarget *b) {
 
 static uint64_t nextTarget;
 
-static const int trayFrames = 12;
-static const double trayFrameSeconds = 0.1;
+static const int trayFrames = 24;
 
 static NSImage *trayImage(AMTrayIcon icon, int frame) {
     NSImage *image = [NSImage imageWithSize:NSMakeSize(22, 22) flipped:YES drawingHandler:^BOOL(NSRect rect) {
         (void)rect;
-        static const int wave[] = {5, 6, 8, 11, 14, 16, 17, 16, 14, 11, 8, 6};
         static const int still[] = {8, 17, 12};
-        BOOL recording = icon == AMTrayRecording;
         [NSColor.blackColor setFill];
         for (int bar = 0; bar < 3; ++bar) {
-            int h = icon == AMTrayRefining ? wave[(frame + trayFrames - 4 * bar) % trayFrames] : still[bar];
-            NSRect bounds = NSMakeRect((recording ? 4 : 5.5) + 4.5 * bar, (22 - h) / 2.0, 3, h);
+            double angle = 2 * M_PI * ((double)frame / trayFrames - (double)bar / 3);
+            CGFloat h = icon == AMTrayIdle ? still[bar] : 11 - 6 * cos(angle);
+            NSRect bounds = NSMakeRect(5.5 + 4.5 * bar, 11 - h / 2, 3, h);
             [[NSBezierPath bezierPathWithRoundedRect:bounds xRadius:1.5 yRadius:1.5] fill];
         }
-        if (recording) [[NSBezierPath bezierPathWithOvalInRect:NSMakeRect(17, 3, 4, 4)] fill];
         return YES;
     }];
     image.template = YES;
@@ -257,6 +274,7 @@ static NSImage *trayImage(AMTrayIcon icon, int frame) {
 @property(nonatomic, strong) NSMenuItem *status;
 @property(nonatomic, strong) NSMenuItem *warning;
 @property(nonatomic, strong) NSMenuItem *dictate;
+@property(nonatomic, strong) NSMenuItem *dictateBoth;
 @property(nonatomic, strong) NSMenuItem *cancel;
 @property(nonatomic, strong) NSMenuItem *meeting;
 @property(nonatomic, strong) NSMenuItem *chooseMeeting;
@@ -269,27 +287,31 @@ static NSImage *trayImage(AMTrayIcon icon, int frame) {
 @property(nonatomic, strong) AMTarget *target;
 @property(nonatomic) BOOL locked;
 @property(nonatomic, strong) NSArray<id> *observers;
-@property(nonatomic) BOOL keyDown;
+@property(nonatomic) UInt32 keysDown;
 @property(nonatomic, strong) NSTimer *timer;
 @property(nonatomic) EventHandlerRef handler;
 @property(nonatomic) EventHotKeyRef hotKey;
+@property(nonatomic) EventHotKeyRef hotKeyBoth;
 - (void)perform:(AMAction)action device:(NSString *)device;
 - (BOOL)active;
 @end
 
 static const EventHotKeyID hotKeyID = {0x41754d65, 1}; // AuMe
 
+static const EventHotKeyID hotKeyBothID = {0x41754d65, 2};
+
 static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
     (void)call;
     EventHotKeyID id = {0};
     if (GetEventParameter(event, kEventParamDirectObject, typeEventHotKeyID, NULL, sizeof(id), NULL, &id) != noErr ||
-        id.signature != hotKeyID.signature || id.id != hotKeyID.id) return eventNotHandledErr;
+        id.signature != hotKeyID.signature || (id.id != hotKeyID.id && id.id != hotKeyBothID.id)) return eventNotHandledErr;
     AMDesktop *ui = (__bridge AMDesktop *)data;
+    const UInt32 key = 1U << id.id;
     if (GetEventKind(event) == kEventHotKeyReleased) {
-        ui.keyDown = NO;
-    } else if (!ui.keyDown) {
-        ui.keyDown = YES;
-        [ui perform:AMToggle device:nil];
+        ui.keysDown &= ~key;
+    } else if (!(ui.keysDown & key)) {
+        ui.keysDown |= key;
+        [ui perform:id.id == hotKeyBothID.id ? AMToggleBoth : AMToggle device:nil];
     }
     return noErr;
 }
@@ -313,10 +335,10 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
         self.trayIcon = icon;
         self.trayStarted = NSProcessInfo.processInfo.systemUptime;
         self.trayFrame = -1;
-    } else if (icon != AMTrayRefining) {
+    } else if (icon == AMTrayIdle) {
         return;
     }
-    if (icon != AMTrayRefining) {
+    if (icon == AMTrayIdle) {
         self.item.button.image = trayImage(icon, 0);
         return;
     }
@@ -325,7 +347,8 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
         for (int frame = 0; frame < trayFrames; frame++) [frames addObject:trayImage(icon, frame)];
         self.trayAnimation = frames;
     }
-    int frame = (int)((NSProcessInfo.processInfo.systemUptime - self.trayStarted) / trayFrameSeconds) % trayFrames;
+    double frameSeconds = icon == AMTrayRecording ? 0.038 : 0.065;
+    int frame = (int)((NSProcessInfo.processInfo.systemUptime - self.trayStarted) / frameSeconds) % trayFrames;
     if (frame != self.trayFrame) {
         self.trayFrame = frame;
         self.item.button.image = self.trayAnimation[frame];
@@ -345,30 +368,39 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
     self.warning.hidden = YES;
     [menu addItem:NSMenuItem.separatorItem];
     self.dictate = [self add:@"Start Quick Scribe" tag:AMStartDictate menu:menu];
+    self.dictateBoth = [self add:@"Start Quick Scribe · Us and Them" tag:AMStartDictateBoth menu:menu];
     self.cancel = [self add:@"Cancel Quick Scribe" tag:AMCancelDictate menu:menu];
     self.cancel.hidden = YES;
     self.meeting = [self add:@"Start Meeting" tag:AMStartMeeting menu:menu];
     self.chooseMeeting = [self add:@"Choose Meeting Group…" tag:-2 menu:menu];
     [self add:@"Copy Last Result" tag:AMCopyLast menu:menu];
-    [menu addItem:NSMenuItem.separatorItem];
     // A host can map the Dictation consumer key to F18 without an event tap.
     BOOL useF18 = [NSProcessInfo.processInfo.environment[@"AUDIOMEMO_MAC_HOTKEY"] isEqualToString:@"F18"];
-    NSString *shortcut = useF18 ? @"F18" : @"Control–Option–Space";
-    NSMenuItem *key = [self add:[@"Global shortcut: " stringByAppendingString:shortcut] tag:-1 menu:menu];
-    key.enabled = NO;
+    [menu addItem:NSMenuItem.separatorItem];
     [self add:@"Quit AudioMemo" tag:AMQuit menu:menu];
     self.item.menu = menu;
 
     EventTypeSpec events[] = {{kEventClassKeyboard, kEventHotKeyPressed}, {kEventClassKeyboard, kEventHotKeyReleased}};
+    EventTargetRef target = GetApplicationEventTarget();
     EventHandlerRef handler = NULL;
-    EventHotKeyRef hotKey = NULL;
-    if (InstallEventHandler(GetApplicationEventTarget(), onHotKey, 2, events, (__bridge void *)self, &handler) != noErr ||
-        RegisterEventHotKey(useF18 ? kVK_F18 : kVK_Space, useF18 ? 0 : (controlKey | optionKey), hotKeyID, GetApplicationEventTarget(), 0, &hotKey) != noErr) {
-        key.title = [NSString stringWithFormat:@"Global shortcut unavailable (%@). Use the menu.", shortcut];
-        self.item.button.toolTip = key.title;
-    }
+    BOOL installed = InstallEventHandler(target, onHotKey, 2, events, (__bridge void *)self, &handler) == noErr;
     self.handler = handler;
+    UInt32 keyCode = useF18 ? kVK_F18 : kVK_Space;
+    UInt32 modifiers = useF18 ? 0 : (controlKey | optionKey);
+    EventHotKeyRef hotKey = NULL, hotKeyBoth = NULL;
+    BOOL registered = installed && RegisterEventHotKey(keyCode, modifiers, hotKeyID, target, 0, &hotKey) == noErr;
+    BOOL registeredBoth = installed && RegisterEventHotKey(keyCode, modifiers | (useF18 ? optionKey : shiftKey),
+        hotKeyBothID, target, 0, &hotKeyBoth) == noErr;
     self.hotKey = hotKey;
+    self.hotKeyBoth = hotKeyBoth;
+    NSString *shortcut = useF18 ? @"F18" : @"Control–Option–Space";
+    NSString *shortcutBoth = useF18 ? @"Option–F18" : @"Control–Option–Shift–Space";
+    NSMenuItem *keys = [self add:[NSString stringWithFormat:@"Quick Scribe: %@%@", shortcut,
+        registered ? @"" : @" (unavailable)"] tag:-1 menu:menu];
+    keys.enabled = NO;
+    NSMenuItem *bothKeys = [self add:[NSString stringWithFormat:@"Us and Them: %@%@", shortcutBoth,
+        registeredBoth ? @"" : @" (unavailable)"] tag:-1 menu:menu];
+    bothKeys.enabled = NO;
 }
 - (void)setUpCaption {
     self.panel = [[AMCaptionPanel alloc] initWithContentRect:NSMakeRect(0, 0, 500, 68)
@@ -406,11 +438,13 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
 }
 - (void)perform:(AMAction)action device:(NSString *)device {
     if (action != AMQuit && ![self active]) return;
-    if ((action == AMStartMeeting || action == AMStartDictate || action == AMToggle) && !self.item.button.window.isVisible) return;
+    BOOL startDictate = action == AMStartDictate || action == AMStartDictateBoth;
+    BOOL toggleDictate = action == AMToggle || action == AMToggleBoth;
+    if ((action == AMStartMeeting || startDictate || toggleDictate) && !self.item.button.window.isVisible) return;
     AMTarget *prior = self.gestureTarget;
-    if (action == AMStartDictate || (action == AMToggle && self.dictate.tag != AMStopDictate)) {
+    if (startDictate || (toggleDictate && self.dictate.tag != AMStopDictate)) {
         self.gestureTarget = snapshot(YES);
-        if (action == AMStartDictate) self.gestureTarget.display = pointerDisplay();
+        if (startDictate) self.gestureTarget.display = pointerDisplay();
     }
     if (!amGoAction(self.handle, action, (char *)device.UTF8String)) self.gestureTarget = prior;
 }
@@ -424,7 +458,7 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
     self.locked = YES;
     self.target.changed = YES;
     self.gestureTarget.changed = YES;
-    self.keyDown = NO;
+    self.keysDown = 0;
     [self.panel orderOut:nil];
 }
 - (void)unlock:(NSNotification *)notice {
@@ -434,7 +468,7 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
 - (void)tick:(NSTimer *)timer {
     (void)timer;
     amGoTick(self.handle, (__bridge void *)self);
-    if (self.trayIcon == AMTrayRefining) [self updateTrayIcon:AMTrayRefining];
+    if (self.trayIcon != AMTrayIdle) [self updateTrayIcon:self.trayIcon];
     if (self.panel.isVisible && ([self.caption.phase isEqualToString:@"starting"] ||
                                  [self.caption.phase isEqualToString:@"finalizing"])) self.caption.needsDisplay = YES;
 }
@@ -464,6 +498,7 @@ static OSStatus onHotKey(EventHandlerCallRef call, EventRef event, void *data) {
     for (id observer in self.observers) [NSWorkspace.sharedWorkspace.notificationCenter removeObserver:observer];
     [NSDistributedNotificationCenter.defaultCenter removeObserver:self];
     if (self.hotKey) UnregisterEventHotKey(self.hotKey);
+    if (self.hotKeyBoth) UnregisterEventHotKey(self.hotKeyBoth);
     if (self.handler) RemoveEventHandler(self.handler);
     [self.panel orderOut:nil];
     if (self.item) [NSStatusBar.systemStatusBar removeStatusItem:self.item];
@@ -515,6 +550,7 @@ void am_ui_render(void *ptr, const char *title, const char *status, const char *
     ui.warning.hidden = !message.length;
     ui.dictate.enabled = dictate != 0;
     ui.dictate.tag = dictate == 1 ? AMStartDictate : dictate == 2 ? AMStopDictate : -1;
+    ui.dictateBoth.enabled = dictate == 1;
     ui.dictate.title = dictate == 2 ? @"Stop Quick Scribe" : @"Start Quick Scribe";
     ui.cancel.hidden = !cancel;
     ui.meeting.enabled = meeting != 0;
@@ -523,12 +559,12 @@ void am_ui_render(void *ptr, const char *title, const char *status, const char *
     ui.chooseMeeting.enabled = meeting == 1;
 }
 
-static NSAttributedString *captionLine(NSString *done, NSString *draft, BOOL listening) {
-    if (!done.length && !draft.length && listening) draft = @"Listening…";
-    NSDictionary *committed = @{NSFontAttributeName: [NSFont systemFontOfSize:16 weight:NSFontWeightMedium],
+static NSAttributedString *captionLine(NSString *done, NSString *draft, NSString *empty) {
+    if (!done.length && !draft.length) draft = empty;
+    NSDictionary *committed = @{NSFontAttributeName: [NSFont systemFontOfSize:17],
         NSForegroundColorAttributeName: NSColor.whiteColor};
-    NSDictionary *tentative = @{NSFontAttributeName: [NSFont systemFontOfSize:16],
-        NSForegroundColorAttributeName: [NSColor colorWithWhite:0.83 alpha:1]};
+    NSDictionary *tentative = @{NSFontAttributeName: [NSFont systemFontOfSize:17],
+        NSForegroundColorAttributeName: [NSColor colorWithSRGBRed:0.76 green:0.79 blue:0.84 alpha:1]};
     NSMutableAttributedString *line = [[NSMutableAttributedString alloc] initWithString:done attributes:committed];
     if (draft.length) {
         if (done.length && ![done hasSuffix:@" "] && ![draft hasPrefix:@" "])
@@ -564,18 +600,25 @@ void am_ui_caption(void *ptr, const char *sessionID, const char *phase, const ch
     }
     if (!screen) screen = NSScreen.mainScreen;
     if (!screen) return;
+    BOOL recording = [stage isEqualToString:@"recording"];
+    BOOL starting = [stage isEqualToString:@"starting"];
+    BOOL refining = [stage isEqualToString:@"finalizing"];
+    split = split && (recording || starting || refining);
     NSRect work = screen.visibleFrame;
-    CGFloat width = MIN(660, NSWidth(work) - 24);
+    CGFloat width = MIN(split ? 560 : 720, NSWidth(work) - 40);
     if (width <= 32) return;
-    NSRect frame = NSMakeRect(NSMidX(work) - width / 2, NSMinY(work) + 18, width, 120);
+    CGFloat height = split ? 2 * captionCardHeight + captionCardGap : captionCardHeight;
+    NSRect frame = NSMakeRect(NSMidX(work) - width / 2, NSMinY(work) + 18, width, height);
     if (!NSEqualRects(ui.panel.frame, frame)) [ui.panel setFrame:frame display:NO];
-    BOOL listening = meeting || [stage isEqualToString:@"recording"];
+    NSString *empty = meeting || recording ? @"Listening…" : nil;
+    if (split && starting) empty = @"Opening audio…";
+    else if (split && refining) empty = @"Refining…";
     ui.caption.phase = stage;
     ui.caption.split = split != 0;
     ui.caption.level = split ? usLevel : level;
     ui.caption.remoteLevel = themLevel;
-    ui.caption.caption = captionLine(text(split ? us : stable), text(split ? usDraft : tentative), listening);
-    ui.caption.remoteCaption = split ? captionLine(text(them), text(themDraft), listening) : nil;
+    ui.caption.caption = captionLine(text(split ? us : stable), text(split ? usDraft : tentative), empty);
+    ui.caption.remoteCaption = split ? captionLine(text(them), text(themDraft), empty) : nil;
     ui.caption.needsDisplay = YES;
     if (!ui.panel.isVisible) [ui.panel orderFrontRegardless];
 }

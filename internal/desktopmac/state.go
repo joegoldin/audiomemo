@@ -116,6 +116,7 @@ func (s viewState) overlay(now time.Time) (st.Preview, string) {
 		if p.Session != id {
 			p = st.Preview{Session: id}
 		}
+		p.Split = p.Split || s.status.QuickSplit
 		return p, state
 	}
 	return st.Preview{}, ""

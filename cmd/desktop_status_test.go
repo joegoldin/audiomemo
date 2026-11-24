@@ -236,3 +236,28 @@ func TestDesktopSIGINTOnlyCancelsPipedWait(t *testing.T) {
 		t.Fatal(out, err)
 	}
 }
+
+func TestDictateBothReachesDaemon(t *testing.T) {
+	desktopTestRuntime(t)
+	modes := make(chan bool, 2)
+	startDesktopCommand(t, desktopservice.Options{
+		StartQuick: func(_ context.Context, _, device string, both bool, _ func(st.Preview), _ func(string)) (st.Quick, error) {
+			if device != "" {
+				t.Errorf("unexpected device %q", device)
+			}
+			modes <- both
+			return nil, errors.New("fixture has no audio input")
+		},
+	})
+	if _, _, err := invokeDesktop(t, "dictate", "toggle", "--both", "-D", "combo"); err == nil || !strings.Contains(err.Error(), "none of the others") {
+		t.Fatalf("accepted conflicting input flags: %v", err)
+	}
+	for _, args := range [][]string{{"dictate", "toggle", "--both"}, {"dictate", "toggle"}} {
+		if _, _, err := invokeDesktop(t, args...); err == nil || !strings.Contains(err.Error(), "fixture has no audio input") {
+			t.Fatalf("did not reach capture backend: %v", err)
+		}
+	}
+	if len(modes) != 2 || !<-modes || <-modes {
+		t.Fatal("regular and dual CLI toggles did not reach the daemon with distinct modes")
+	}
+}

@@ -65,6 +65,7 @@ default_backend = "auto"
 [desktop]
 # meeting_device = "meeting" # name of an existing device group
 # dictation_mic = "mic"     # exactly one microphone, never a system monitor
+# dictation_group = "meeting" # group with Us and Them inputs; falls back to meeting_device
 paste = false
 
 # Overrides for individual aliases or devices. Omit to infer (Auto).

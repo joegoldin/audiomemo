@@ -13,6 +13,10 @@ Script**. Set the command to the absolute path to the installed binary followed
 by `dictate toggle`, then assign a regular chord and resolve any KDE conflict.
 This uses the same control socket as `audiomemo dictate toggle` in a terminal.
 It does not start the daemon, open a meeting, or need an input-device grant.
+For Us and Them captions, add a second shortcut to the same binary with
+`dictate toggle --both`. Use an extra modifier such as Alt if the chord is free.
+Configure `desktop.dictation_group` with both roles; if unset, the shortcut uses
+`desktop.meeting_device`. Press either binding during Quick Scribe to stop it.
 Reload the shortcut in KDE if you used a path that changes on upgrade.
 
 The Plasma StatusNotifierItem menu includes capture status and elapsed time,
@@ -35,7 +39,8 @@ daemon for its normal recoverable shutdown.
   into a regular window. On session lock or session change, the overlay disappears. Quick Scribe
   stays visible through final transcription with a progress animation, then
   reports the copy result briefly. During capture, the input meters follow
-  the audio, with separate Us and Them lanes for a mixed-role group. An overlay dismissed with its output or by lock is not remapped on
+  the audio, with separate Us and Them cards for a mixed-role group. An overlay
+  dismissed with its output or by lock is not remapped on
   another display for the same capture.
 - When available, clipboard delivery uses `ext_data_control_manager_v1` on the
   unambiguous Wayland seat. Copy changes only the regular clipboard. The helper
@@ -70,7 +75,8 @@ ctest --test-dir build-linux-desktop --output-on-failure
 ```
 
 Native checks additionally need Python 3 and `wayland-server`. The tests use an
-offscreen helper or a synthetic Wayland compositor over a socketpair. The Go
+offscreen helper or a synthetic Wayland compositor over a socketpair. An
+offscreen rendering check also verifies the tray waveform and caption cards. The Go
 bridge tests use a fake helper. None verifies a real KDE shortcut, tray,
 compositor placement, click-through, bottom-panel clearance, mixed-scale
 outputs, screen-lock notifications, or Klipper behavior. Those remain native

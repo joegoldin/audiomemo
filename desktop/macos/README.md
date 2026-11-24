@@ -12,14 +12,18 @@ workers; shutdown of the adapter and daemon should share a lifetime.
 
 The menu mirrors the controller. Start Meeting uses its configured default;
 Choose Meeting Group accepts a configured group name. Quick Scribe defaults to
-copy. Control–Option–Space uses a registered system hotkey (no event monitor);
-if another app owns the shortcut, the menu remains usable and shows a warning.
+copy. Control–Option–Space toggles microphone dictation. Add Shift for separate
+Us and Them caption cards. That shortcut uses `desktop.dictation_group` (or
+`desktop.meeting_device` if unset), which must name a group with both roles.
+Both bindings use registered system hotkeys, not an event monitor. If a shortcut
+is unavailable, the menu still works and identifies the unavailable binding.
 The caption is click-through and never key. For a shortcut it uses the focused
 window's display when Accessibility can identify it, otherwise the pointer's
 display. The menu uses the pointer's display. Display removal falls back to the
-main display. The plate shows the last two visual lines and hides when capture
-stops, on cancel, and on lock. If the controller sends a meeting preview, the
-same plate shows it as a live draft; it never goes to the clipboard.
+main display. Each card shows the latest two visual lines. Quick Scribe keeps
+its captions visible through refinement, then briefly shows the copy result.
+Cancel and screen lock hide the overlay. A meeting preview is shown as a live
+draft and never goes to the clipboard.
 
 Opt-in paste only posts Command–V to the process whose focused window and
 editable field still match the original Accessibility snapshot. Unknown fields,
@@ -60,5 +64,5 @@ reset or renew grants. No signing identity or entitlements are provisioned here.
 
 To use a remapped microphone key, set `AUDIOMEMO_MAC_HOTKEY=F18` in the
 launch agent and map the Dictation consumer usage (`0xC000000CF`) to F18
-(`0x70000006D`) in the host keyboard configuration. F18 toggles the same
-Quick Scribe session and preview; without this setting the default is unchanged.
+(`0x70000006D`) in the host keyboard configuration. F18 toggles microphone dictation;
+Option–F18 toggles the Us and Them mode.

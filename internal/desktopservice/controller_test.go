@@ -113,7 +113,7 @@ func TestQuickCancelIsScopedToSessionAndAutoFinishDeliversOnce(t *testing.T) {
 	notices := make(chan func(string), 2)
 	instances := make(chan *fakeQuick, 2)
 	c := newTestController(t, Options{Desktop: fakeDesktop{deliveries: delivered},
-		StartQuick: func(_ context.Context, id, _ string, _ func(st.Preview), finish func(string)) (st.Quick, error) {
+		StartQuick: func(_ context.Context, id, _ string, _ bool, _ func(st.Preview), finish func(string)) (st.Quick, error) {
 			notices <- finish
 			q := &fakeQuick{result: func(ctx context.Context) (string, error) {
 				started <- id
@@ -157,7 +157,7 @@ func TestCancelQueuedQuickDoesNotDeliverOrReplaceLast(t *testing.T) {
 	finish := make(chan struct{})
 	c := newTestController(t, Options{
 		Desktop: fakeDesktop{deliveries: delivered},
-		StartQuick: func(_ context.Context, id, device string, _ func(st.Preview), _ func(string)) (st.Quick, error) {
+		StartQuick: func(_ context.Context, id, device string, _ bool, _ func(st.Preview), _ func(string)) (st.Quick, error) {
 			return &fakeQuick{result: func(ctx context.Context) (string, error) {
 				if device == "cancel" {
 					entered <- true
@@ -303,7 +303,7 @@ func (d inFlightDesktop) Deliver(context.Context, string, string, bool) error {
 }
 func TestCannotCancelAfterDesktopHandoff(t *testing.T) {
 	d := inFlightDesktop{entered: make(chan struct{}), release: make(chan struct{})}
-	c := newTestController(t, Options{Desktop: d, StartQuick: func(context.Context, string, string, func(st.Preview), func(string)) (st.Quick, error) {
+	c := newTestController(t, Options{Desktop: d, StartQuick: func(context.Context, string, string, bool, func(st.Preview), func(string)) (st.Quick, error) {
 		return &fakeQuick{result: func(context.Context) (string, error) { return "finished", nil }}, nil
 	}})
 	defer close(d.release)
@@ -319,7 +319,7 @@ func TestQuickFinalIsReadableWithoutClipboard(t *testing.T) {
 	entered := make(chan bool, 1)
 	finish := make(chan struct{})
 	c := newTestController(t, Options{
-		StartQuick: func(context.Context, string, string, func(st.Preview), func(string)) (st.Quick, error) {
+		StartQuick: func(context.Context, string, string, bool, func(st.Preview), func(string)) (st.Quick, error) {
 			return &fakeQuick{result: func(context.Context) (string, error) {
 				entered <- true
 				<-finish
@@ -344,5 +344,33 @@ func TestQuickFinalIsReadableWithoutClipboard(t *testing.T) {
 	last := do(c, "last.text")
 	if start.Error != "" || stop.Error != "" || last.Error != "" || last.Text != "fixture final transcript" || last.Status.QuickState != "ready" {
 		t.Fatalf("start=%v stop=%v last=%v", start, stop, last)
+	}
+}
+
+func TestToggleBothUsesOneQuickSession(t *testing.T) {
+	var starts []bool
+	c := newTestController(t, Options{StartQuick: func(_ context.Context, _ string, device string, both bool, _ func(st.Preview), _ func(string)) (st.Quick, error) {
+		if device != "" {
+			t.Errorf("unexpected explicit device %q", device)
+		}
+		starts = append(starts, both)
+		return &fakeQuick{result: func(context.Context) (string, error) { return "both sides", nil }}, nil
+	}})
+	r := st.Request{Version: st.Version, Action: "dictate.toggle", Both: true}
+	bad := r
+	bad.Device = "other"
+	if got := c.Do(t.Context(), bad); got.Error != string(ErrRequest) {
+		t.Fatal(got)
+	}
+	first := c.Do(t.Context(), r)
+	if first.Error != "" || first.Status.QuickState != "recording" || !first.Status.QuickSplit {
+		t.Fatal(first)
+	}
+	if stopped := c.Do(t.Context(), r); stopped.Error != "" || stopped.Status.QuickSession != first.ID || stopped.Status.QuickState == "recording" {
+		t.Fatal(stopped)
+	}
+	regular := do(c, "dictate.toggle")
+	if regular.Error != "" || regular.Status.QuickSplit || len(starts) != 2 || !starts[0] || starts[1] {
+		t.Fatalf("regular toggle: %+v, start modes: %v", regular, starts)
 	}
 }

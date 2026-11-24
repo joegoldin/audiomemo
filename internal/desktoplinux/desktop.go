@@ -75,7 +75,8 @@ func (*Adapter) Target() string { return "" }
 func (d *Adapter) Update(st sessiontypes.Status) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if st.Session != d.status.Session || !captionsActive(st.Capture) {
+	keepQuick := st.QuickState == "finalizing" && st.QuickSession != "" && st.QuickSession == d.preview.Session
+	if !keepQuick && (st.Session != d.status.Session || !captionsActive(st.Capture)) {
 		d.preview = sessiontypes.Preview{}
 	}
 	d.status = st
@@ -122,6 +123,7 @@ func (d *Adapter) wake() {
 type viewStatus struct {
 	QuickSession string `json:"quick_session,omitempty"`
 	QuickState   string `json:"quick_state,omitempty"`
+	QuickSplit   bool   `json:"quick_split,omitempty"`
 	Capture      string `json:"capture"`
 	Session      string `json:"session"`
 	Started      string `json:"started_utc"`
@@ -357,7 +359,7 @@ func (d *Adapter) write(b *bridge, w io.Writer) {
 				Type    string               `json:"type"`
 				Status  viewStatus           `json:"status"`
 				Preview sessiontypes.Preview `json:"preview"`
-			}{"view", viewStatus{s.QuickSession, s.QuickState, s.Capture, s.Session, s.StartedUTC, s.JobState, s.Warning != ""}, p}) {
+			}{"view", viewStatus{s.QuickSession, s.QuickState, s.QuickSplit, s.Capture, s.Session, s.StartedUTC, s.JobState, s.Warning != ""}, p}) {
 				return
 			}
 		case note := <-b.notes:

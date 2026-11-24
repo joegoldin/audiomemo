@@ -29,8 +29,8 @@ func desktopOptions(_ context.Context, path string) (desktopservice.Options, err
 	root := c.ResolveOutputDir()
 	opts := meetingfinal.Options{Nemo: c.Transcribe.Nemo, Language: c.Transcribe.Language}
 	return desktopservice.Options{Desktop: nativeDesktop(), Paste: c.Desktop.Paste,
-		StartQuick: func(ctx context.Context, id, dev string, emit func(st.Preview), finish func(string)) (st.Quick, error) {
-			return quickscribe.Start(ctx, c, id, dev, emit, finish)
+		StartQuick: func(ctx context.Context, id, dev string, both bool, emit func(st.Preview), finish func(string)) (st.Quick, error) {
+			return quickscribe.Start(ctx, c, id, dev, both, emit, finish)
 		},
 		StartMeetingPreview: func(ctx context.Context, id, dev string, emit func(st.Preview)) (st.Meeting, error) {
 			if dev == "" {

@@ -83,7 +83,7 @@ func TestLocalFailureCannotDialCloud(t *testing.T) {
 	c.Transcribe.Nemo.Binary = "/missing/nemo"
 	c.Transcribe.ElevenLabs.APIKey = "not-a-real-key"
 	c.Transcribe.DefaultBackend = "elevenlabs"
-	_, e := Start(t.Context(), c, "id", "", func(sessiontypes.Preview) {}, func(string) {})
+	_, e := Start(t.Context(), c, "id", "", false, func(sessiontypes.Preview) {}, func(string) {})
 	if e == nil {
 		t.Fatal("missing local backend must fail before opening mic")
 	}
@@ -110,17 +110,49 @@ func TestQuickGroupPreservesOnlyTwoSides(t *testing.T) {
 	c.DeviceGroups["call"] = []string{"speaker", "mic", "monitor"}
 	c.DeviceGroups["remote"] = []string{"speaker", "monitor"}
 	ds := []record.Device{{Name: "local", IsDefault: true}, {Name: "remote.monitor", IsMonitor: true}, {Name: "other.monitor", IsMonitor: true}}
-	devices, roles, err := quickDevices(c, "call", ds)
+	devices, roles, err := quickDevices(c, "call", false, ds)
 	if err != nil || !slices.Equal(devices, []string{"remote.monitor", "local", "other.monitor"}) || !slices.Equal(roles, []string{"them", "us", "them"}) {
 		t.Fatalf("mixed group: %v %v %v", devices, roles, err)
 	}
-	if devices, roles, err := quickDevices(c, "remote", ds); err != nil || len(devices) != 2 || roles != nil {
+	if devices, roles, err := quickDevices(c, "remote", false, ds); err != nil || len(devices) != 2 || roles != nil {
 		t.Fatalf("one-sided group: %v %v %v", devices, roles, err)
 	}
-	if devices, roles, err := quickDevices(c, "speaker", ds); err != nil || !slices.Equal(devices, []string{"remote.monitor"}) || roles != nil {
+	if devices, roles, err := quickDevices(c, "speaker", false, ds); err != nil || !slices.Equal(devices, []string{"remote.monitor"}) || roles != nil {
 		t.Fatalf("explicit system audio: %v %v %v", devices, roles, err)
 	}
-	if devices, roles, err := quickDevices(c, "", ds); err != nil || !slices.Equal(devices, []string{"local"}) || roles != nil {
+	if devices, roles, err := quickDevices(c, "", false, ds); err != nil || !slices.Equal(devices, []string{"local"}) || roles != nil {
 		t.Fatalf("implicit microphone: %v %v %v", devices, roles, err)
+	}
+}
+
+func TestBothRequiresConfiguredTwoSidedGroup(t *testing.T) {
+	c := config.Default()
+	c.Desktop.DictationMic = "mic"
+	c.Devices = map[string]string{"mic": "mic", "playback": "audio.monitor"}
+	c.DeviceGroups["call"] = []string{"mic", "playback"}
+	c.DeviceGroups["local-only"] = []string{"mic"}
+	ds := []record.Device{{Name: "mic", IsDefault: true}, {Name: "audio.monitor", IsMonitor: true}}
+	if _, _, err := quickDevices(c, "", true, ds); err == nil {
+		t.Fatal("selected system audio without a configured group")
+	}
+	c.Desktop.MeetingDevice = "call"
+	devices, roles, err := quickDevices(c, "", true, ds)
+	if err != nil || !slices.Equal(devices, []string{"mic", "audio.monitor"}) || !slices.Equal(roles, []string{"us", "them"}) {
+		t.Fatalf("meeting group fallback: %v %v %v", devices, roles, err)
+	}
+	c.Desktop.DictationGroup = "local-only"
+	if _, _, err := quickDevices(c, "", true, ds); err == nil {
+		t.Fatal("accepted a one-sided override")
+	}
+	c.Desktop.DictationGroup = "call"
+	if _, roles, err := quickDevices(c, "", true, ds); err != nil || len(roles) != 2 {
+		t.Fatalf("two-sided override: %v %v", roles, err)
+	}
+	c.Record.Device = "call"
+	for _, mic := range []string{"mic", ""} {
+		c.Desktop.DictationMic = mic
+		if devices, roles, err := quickDevices(c, "", false, ds); err != nil || !slices.Equal(devices, []string{"mic"}) || roles != nil {
+			t.Fatalf("regular dictation opened both sides: %v %v %v", devices, roles, err)
+		}
 	}
 }

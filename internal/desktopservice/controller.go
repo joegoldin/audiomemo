@@ -26,7 +26,7 @@ type Options struct {
 	Paste      bool
 	// Producer contexts outlive the admitting request. StartQuick's finish
 	// callback is nonblocking and asks the controller to stop this session.
-	StartQuick func(ctx context.Context, id, device string, preview func(st.Preview), finish func(reason string)) (st.Quick, error)
+	StartQuick func(ctx context.Context, id, device string, both bool, preview func(st.Preview), finish func(reason string)) (st.Quick, error)
 	// StartMeetingPreview takes precedence over StartMeeting when set.
 	StartMeetingPreview func(ctx context.Context, id, device string, preview func(st.Preview)) (st.Meeting, error)
 	StartMeeting        func(ctx context.Context, id, device string) (st.Meeting, error)
@@ -103,6 +103,7 @@ type controller struct {
 	lastText        string
 	latestQuick     string
 	quickOutcome    string
+	quickSplit      bool
 
 	jobs       chan *job
 	workerDone chan struct{}
@@ -140,7 +141,7 @@ func newController(ctx context.Context, opts Options) *controller {
 }
 
 func (c *controller) statusLocked() st.Status {
-	s := st.Status{QuickSession: c.latestQuick, QuickState: c.quickOutcome, Capture: "idle", Job: c.recentJob, JobState: c.recentState, Warning: c.warning}
+	s := st.Status{QuickSession: c.latestQuick, QuickState: c.quickOutcome, QuickSplit: c.quickSplit, Capture: "idle", Job: c.recentJob, JobState: c.recentState, Warning: c.warning}
 	if cap := c.capture; cap != nil {
 		s.Capture, s.Session, s.StartedUTC, s.Warning = cap.phase, cap.id, cap.started, cap.warning
 		if cap.kind == "dictating" {
@@ -236,6 +237,7 @@ func validateRequest(r st.Request) (ErrorCode, string) {
 	}
 	if (r.Wait || r.Print != "") && r.Action != "meeting.stop" ||
 		r.Device != "" && r.Action != "meeting.start" && r.Action != "dictate.start" && r.Action != "dictate.toggle" ||
+		r.Both && (r.Device != "" || (r.Action != "dictate.start" && r.Action != "dictate.toggle")) ||
 		r.Bundle != "" && r.Action != "meeting.retry" ||
 		r.Session != "" && r.Action != "meeting.stop" && r.Action != "dictate.stop" && r.Action != "dictate.cancel" {
 		return ErrRequest, "unexpected fields for this action"
@@ -299,12 +301,12 @@ func (c *controller) action(ctx context.Context, r st.Request) (st.Reply, *job) 
 	c.mu.Unlock()
 	switch r.Action {
 	case "dictate.start":
-		return c.start("dictating", r.Device), nil
+		return c.start("dictating", r.Device, r.Both), nil
 	case "meeting.start":
-		return c.start("meeting", r.Device), nil
+		return c.start("meeting", r.Device, false), nil
 	case "dictate.toggle":
 		if cap == nil || cap.kind != "dictating" {
-			return c.start("dictating", r.Device), nil
+			return c.start("dictating", r.Device, r.Both), nil
 		}
 		return c.stopQuick(cap, "")
 	case "dictate.stop":
@@ -333,7 +335,7 @@ func (c *controller) action(ctx context.Context, r st.Request) (st.Reply, *job) 
 	}
 }
 
-func (c *controller) start(kind, device string) st.Reply {
+func (c *controller) start(kind, device string, both bool) st.Reply {
 	c.mu.Lock()
 	if cap := c.capture; cap != nil {
 		id := cap.id
@@ -358,7 +360,7 @@ func (c *controller) start(kind, device string) st.Reply {
 	c.mu.Lock()
 	c.warning = ""
 	if kind == "dictating" {
-		c.latestQuick, c.quickOutcome = cap.id, ""
+		c.latestQuick, c.quickOutcome, c.quickSplit = cap.id, "", both
 	}
 	c.setCaptureLocked(cap)
 	c.mu.Unlock()
@@ -380,7 +382,7 @@ func (c *controller) start(kind, device string) st.Reply {
 			cap.target = c.opts.Desktop.Target()
 		}
 		var notify sync.Once
-		cap.quick, err = c.opts.StartQuick(ctx, cap.id, device, func(p st.Preview) { c.publish(cap.id, p) }, func(reason string) {
+		cap.quick, err = c.opts.StartQuick(ctx, cap.id, device, both, func(p st.Preview) { c.publish(cap.id, p) }, func(reason string) {
 			notify.Do(func() { notices <- reason })
 		})
 		if cap.quick == nil && err == nil {

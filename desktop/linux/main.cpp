@@ -1,3 +1,4 @@
+#include "appearance.h"
 #include "wayland.h"
 
 #include <KStatusNotifierItem>
@@ -21,12 +22,11 @@
 #include <QScreen>
 #include <QSocketNotifier>
 #include <QSurfaceFormat>
-#include <QTextCursor>
-#include <QTextDocument>
 #include <QTimer>
 #include <QWindow>
 
 #include <algorithm>
+#include <array>
 #include <cerrno>
 #include <csignal>
 #include <fcntl.h>
@@ -75,38 +75,9 @@ bool layerPluginAvailable()
     return false;
 }
 
-enum class TrayIcon { Idle, Recording, Refining };
-constexpr int trayFrames = 12;
-constexpr int trayFrameMs = 100;
-
-QIcon indicator(TrayIcon state, int frame = 0)
-{
-    static constexpr int wave[] = {5, 6, 8, 11, 14, 16, 17, 16, 14, 11, 8, 6};
-    static constexpr int still[] = {8, 17, 12};
-    QIcon icon;
-    for (const int px : {16, 22, 32, 48}) {
-        QPixmap image(px, px);
-        image.fill(Qt::transparent);
-        QPainter p(&image);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.scale(px / 22.0, px / 22.0);
-        const bool recording = state == TrayIcon::Recording;
-        // A fine outline keeps the pixmap legible on a panel of either color.
-        p.setPen(QPen(QColor("#20242c"), 0.9));
-        p.setBrush(QColor("#f3f5fa"));
-        for (int bar = 0; bar < 3; ++bar) {
-            const int h = state == TrayIcon::Refining ? wave[(frame + trayFrames - 4 * bar) % trayFrames] : still[bar];
-            p.drawRoundedRect(QRectF((recording ? 4 : 5.5) + 4.5 * bar, (22 - h) / 2.0, 3, h), 1.5, 1.5);
-        }
-        if (recording) {
-            p.setBrush(QColor("#ff695e"));
-            p.drawEllipse(QRectF(17, 3, 4, 4));
-        }
-        p.end();
-        icon.addPixmap(image);
-    }
-    return icon;
-}
+using appearance::TrayIcon;
+using appearance::indicator;
+using appearance::trayFrames;
 
 class Caption final : public QWindow
 {
@@ -135,30 +106,34 @@ public:
 #endif
         // The compositor chooses an output at map time. Size conservatively in
         // logical pixels so the surface fits even the smallest scaled output.
-        int width = 720;
         for (const auto *screen : QGuiApplication::screens())
-            width = std::min(width, screen->geometry().width() - 40);
-        setGeometry(0, 0, std::max(1, width), 120);
+            maxWidth_ = std::min(maxWidth_, std::max(1, screen->geometry().width() - 40));
         connect(&animation_, &QTimer::timeout, this, [this] { requestUpdate(); });
     }
 
-    void phase(const QString &value)
+    void updateCaption(const QString &phase, const QJsonObject &preview, bool split)
     {
-        if (phase_ == value)
+        split = split || preview.value("split").toBool();
+        if (phase_ == phase && preview_ == preview && split_ == split)
             return;
-        phase_ = value;
-        if (value == "starting" || value == "finalizing") {
-            clock_.start();
-            animation_.start(32);
-        } else {
-            animation_.stop();
+        if (phase_ != phase) {
+            phase_ = phase;
+            if (phase == "starting" || phase == "finalizing") {
+                clock_.start();
+                animation_.start(32);
+            } else {
+                animation_.stop();
+            }
         }
-        requestUpdate();
-    }
-
-    void preview(const QJsonObject &p)
-    {
-        preview_ = p;
+        preview_ = preview;
+        split_ = split;
+        auto desired = appearance::captionSize(phase_, split_);
+        desired.setWidth(std::min(desired.width(), maxWidth_));
+        if (requestedSize_ != desired) {
+            // LayerShellQt forwards window size changes without remapping the surface.
+            requestedSize_ = desired;
+            resize(desired);
+        }
         requestUpdate();
     }
 
@@ -186,104 +161,20 @@ private:
         p.setCompositionMode(QPainter::CompositionMode_Source);
         p.fillRect(box, Qt::transparent);
         p.setCompositionMode(QPainter::CompositionMode_SourceOver);
-        p.setRenderHint(QPainter::Antialiasing);
-        p.setPen(Qt::NoPen);
-        p.setBrush(QColor(22, 24, 32, 154));
-        p.drawRoundedRect(box.adjusted(0, 0, -1, -1), 13, 13);
-
-        const bool recording = phase_ == "recording";
-        const bool meeting = phase_ == "meeting";
-        const bool split = preview_.value("split").toBool();
-        QString title = "Quick Scribe";
-        if (meeting) title = "Meeting · Live draft";
-        else if (phase_ == "starting") title = "Opening audio…";
-        else if (phase_ == "finalizing") title = "Refining transcript…";
-        else if (phase_ == "copied") title = "Copied to clipboard";
-        else if (phase_ == "ready") title = "Result ready · audiomemo dictate last";
-        else if (phase_ == "failed") title = "No result · Check audiomemo status";
-        QFont header = QGuiApplication::font();
-        header.setBold(true);
-        p.setFont(header);
-        p.setPen(Qt::white);
-        p.drawText(QRect(16, 6, std::max(1, box.width() - 108), 24), Qt::AlignVCenter,
-                   QFontMetrics(header).elidedText(title, Qt::ElideRight, std::max(1, box.width() - 108)));
-        if (phase_ == "starting" || phase_ == "finalizing") {
-            const int step = int(clock_.elapsed() / 90) % 8;
-            for (int i = 0; i < 8; ++i) {
-                p.setPen(Qt::NoPen);
-                p.setBrush(QColor(150, 198, 255, i == step ? 255 : 56));
-                p.drawEllipse(QRectF(box.width() - 80 + 8*i, 15, 5, 5));
-            }
-        }
-        if ((recording || phase_ == "finalizing") && split) {
-            const int half = (box.width() - 42) / 2;
-            lane(p, QRect(16, 35, std::max(1, half), 74), "Us", preview_.value("us").toObject(), QColor("#88c6ff"), recording);
-            lane(p, QRect(26 + half, 35, std::max(1, half), 74), "Them", preview_.value("them").toObject(), QColor("#c6a8ff"), recording);
-        } else {
-            if (recording)
-                meter(p, box.width() - 94, 9, preview_.value("level").toDouble(), QColor("#88c6ff"));
-            if (recording || meeting)
-                transcript(p, box.adjusted(16, 36, -16, -10), preview_, "Listening…");
-            else if (phase_ == "finalizing")
-                transcript(p, box.adjusted(16, 36, -16, -10), preview_, {});
-        }
+        appearance::paintCaption(p, box, phase_, preview_, split_, clock_.isValid() ? clock_.elapsed() : 0);
         p.end();
         backing_.endPaint();
         backing_.flush(box);
     }
 
-    static void meter(QPainter &p, int x, int y, double level, QColor color)
-    {
-        p.setPen(Qt::NoPen);
-        for (int i = 0; i < 12; ++i) {
-            color.setAlpha(level * 12 > i ? 240 : 44);
-            p.setBrush(color);
-            const int h = 5 + i / 2;
-            p.drawRoundedRect(QRectF(x + i * 5, y + (12 - h) / 2, 3, h), 1, 1);
-        }
-    }
-
-    static void lane(QPainter &p, const QRect &box, const QString &label, const QJsonObject &data, const QColor &color, bool recording)
-    {
-        p.setPen(color);
-        p.drawText(box.left(), box.top() + 14, label);
-        if (recording && box.width() > 110)
-            meter(p, box.right() - 62, box.top() + 3, data.value("level").toDouble(), color);
-        transcript(p, box.adjusted(0, 21, 0, 0), data, recording ? QString("Listening…") : QString());
-    }
-
-    static void transcript(QPainter &p, const QRect &clip, const QJsonObject &data, const QString &empty)
-    {
-        const auto stable = data.value("stable").toString();
-        const auto draft = data.value("tentative").toString();
-        QTextDocument doc;
-        doc.setDocumentMargin(0);
-        QFont font = QGuiApplication::font();
-        font.setPointSize(13);
-        doc.setDefaultFont(font);
-        doc.setTextWidth(std::max(1, clip.width()));
-        QTextCursor cursor(&doc);
-        QTextCharFormat fmt;
-        fmt.setForeground(Qt::white);
-        cursor.insertText(stable, fmt);
-        if (!stable.isEmpty() && !draft.isEmpty() && !stable.back().isSpace() && !draft.front().isSpace())
-            cursor.insertText(" ");
-        fmt.setForeground(QColor("#d3dbea"));
-        fmt.setFontItalic(true);
-        cursor.insertText(stable.isEmpty() && draft.isEmpty() ? empty : draft, fmt);
-        p.save();
-        p.setClipRect(clip);
-        p.translate(clip.left(), clip.top() - std::max(0.0, doc.size().height() - clip.height()));
-        doc.drawContents(&p);
-        p.restore();
-    }
-
     QBackingStore backing_;
+    QSize requestedSize_;
+    int maxWidth_ = appearance::captionSize({}, false).width();
     QTimer animation_;
     QElapsedTimer clock_;
     QString phase_;
     QJsonObject preview_;
-
+    bool split_ = false;
 };
 
 class Desktop final : public QObject
@@ -344,7 +235,7 @@ public:
         });
         connect(&trayAnimation_, &QTimer::timeout, this, [this] {
             trayFrame_ = (trayFrame_ + 1) % trayFrames;
-            item_->setIconByPixmap(trayFrames_[trayFrame_]);
+            item_->setIconByPixmap(animatedIcons_[trayFrame_]);
         });
         connect(&input_, &QSocketNotifier::activated, this, [this] { read(); });
         refresh();
@@ -456,18 +347,18 @@ private:
         if (lastIcon_ == state)
             return;
         lastIcon_ = state;
-        if (state != TrayIcon::Refining) {
+        if (state == TrayIcon::Idle) {
             trayAnimation_.stop();
             item_->setIconByPixmap(indicator(state));
             return;
         }
-        if (trayFrames_[0].isNull()) {
+        if (animatedIcons_[0].isNull()) {
             for (int i = 0; i < trayFrames; ++i)
-                trayFrames_[i] = indicator(state, i);
+                animatedIcons_[i] = indicator(state, i);
         }
         trayFrame_ = 0;
-        item_->setIconByPixmap(trayFrames_[trayFrame_]);
-        trayAnimation_.start(trayFrameMs);
+        item_->setIconByPixmap(animatedIcons_[trayFrame_]);
+        trayAnimation_.start(state == TrayIcon::Recording ? 38 : 65);
     }
 
     void refresh()
@@ -493,10 +384,10 @@ private:
         } else if (!caption_ && shown_ != id) {
             shown_ = id;
             caption_ = std::make_unique<Caption>();
-            caption_->phase(phase);
+            caption_->updateCaption(phase, preview_, capture_ != "meeting" && quickSplit_);
             caption_->show();
         } else if (caption_) {
-            caption_->phase(phase);
+            caption_->updateCaption(phase, preview_, capture_ != "meeting" && quickSplit_);
         }
         if (!item_)
             return;
@@ -578,10 +469,11 @@ private:
             const auto job = state.value("job_state").toString();
             job_ = QStringList{"queued", "running", "ready", "failed", "canceled"}.contains(job) ? job : QString();
             warning_ = state.value("warning").toBool();
-            refresh();
+            quickSplit_ = state.value("quick_split").toBool();
             const auto p = m.value("preview").toObject();
-            if (caption_ && p.value("session").toString() == overlaySession_)
-                caption_->preview(p);
+            const auto id = capture_ == "meeting" ? session_ : quickSession_;
+            preview_ = !id.isEmpty() && p.value("session").toString() == id ? p : QJsonObject{};
+            refresh();
         } else if (type == "copy") {
             const auto id = m.value("id").toInteger();
             const auto deadline = m.value("deadline_ms").toInteger();
@@ -651,7 +543,7 @@ private:
     qint64 noteUntil_ = 0;
     std::optional<TrayIcon> lastIcon_;
     QTimer trayAnimation_;
-    QIcon trayFrames_[trayFrames];
+    std::array<QIcon, trayFrames> animatedIcons_;
     int trayFrame_ = 0;
     uint64_t lockEpoch_ = 0;
     uint64_t trayEpoch_ = 0;
@@ -659,6 +551,8 @@ private:
     bool locked_ = true;
     bool tray_ = false;
     bool warning_ = false;
+    bool quickSplit_ = false;
+    QJsonObject preview_;
     bool capabilitiesKnown_ = false;
     bool noPreview_ = false;
     bool noTray_ = false;

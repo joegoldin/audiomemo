@@ -16,14 +16,17 @@ func newDictateCommand() *cobra.Command {
 		"start": "Start dictation", "stop": "Stop and finalize dictation", "toggle": "Start or stop dictation", "cancel": "Discard dictation or cancel its pending result",
 	} {
 		var device string
+		var both bool
 		control := &cobra.Command{Use: action, Short: desc, Args: cobra.NoArgs,
 			RunE: func(cmd *cobra.Command, _ []string) error {
-				_, err := desktopRequest(cmd, sessiontypes.Request{Action: "dictate." + action, Device: device})
+				_, err := desktopRequest(cmd, sessiontypes.Request{Action: "dictate." + action, Device: device, Both: both})
 				return err
 			},
 		}
 		if action == "start" || action == "toggle" {
 			control.Flags().StringVarP(&device, "device", "D", "", "microphone, alias, or input group")
+			control.Flags().BoolVar(&both, "both", false, "caption Us and Them from the configured desktop group")
+			control.MarkFlagsMutuallyExclusive("device", "both")
 		}
 		command.AddCommand(control)
 	}

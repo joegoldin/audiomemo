@@ -279,10 +279,12 @@ func amGoAction(handle C.uintptr_t, action C.int, device *C.char) C.int {
 	case C.AMQuit:
 		u.quit.Do(func() { go u.invoke(st.Request{Version: st.Version, Action: "quit"}) })
 		return 1
-	case C.AMToggle:
+	case C.AMToggle, C.AMToggleBoth:
 		r.Action = "dictate.toggle"
-	case C.AMStartDictate:
+		r.Both = action == C.AMToggleBoth
+	case C.AMStartDictate, C.AMStartDictateBoth:
 		r.Action = "dictate.start"
+		r.Both = action == C.AMStartDictateBoth
 	case C.AMStopDictate:
 		r.Action = "dictate.stop"
 	case C.AMCancelDictate:
